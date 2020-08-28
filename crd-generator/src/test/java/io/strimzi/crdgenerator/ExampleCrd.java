@@ -27,7 +27,8 @@ import java.util.Map;
         group = "crdgenerator.strimzi.io",
         names = @Crd.Spec.Names(
             kind = "Example",
-            plural = "examples"),
+            plural = "examples",
+            categories = {"strimzi"}),
         scope = "Namespaced",
         version = "v1alpha1",
     versions = {
@@ -109,9 +110,13 @@ public class ExampleCrd<T, U extends Number, V extends U> extends CustomResource
 
     public List<? extends List<? extends U>> listOfWildcardTypeVar4;
 
+    public List<Map<String, Object>> listOfMaps;
+
     private String either;
     private String or;
 
+    private MapOrList alternatives;
+    private Type1OrType2 typedAlternatives;
 
     @Description("Example of complex type.")
     public static class ObjectProperty {
@@ -273,5 +278,21 @@ public class ExampleCrd<T, U extends Number, V extends U> extends CustomResource
 
     public void setAffinity(Affinity affinity) {
         this.affinity = affinity;
+    }
+
+    public MapOrList getAlternatives() {
+        return alternatives;
+    }
+
+    public void setAlternatives(MapOrList alternatives) {
+        this.alternatives = alternatives;
+    }
+
+    public Type1OrType2 getTypedAlternatives() {
+        return typedAlternatives;
+    }
+
+    public void setTypedAlternatives(Type1OrType2 alternatives) {
+        this.typedAlternatives = typedAlternatives;
     }
 }

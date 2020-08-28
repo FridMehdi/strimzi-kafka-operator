@@ -5,9 +5,13 @@
 package io.strimzi.systemtest.utils.kafkaUtils;
 
 import io.fabric8.kubernetes.api.model.Service;
+import io.strimzi.api.kafka.model.KafkaBridge;
 import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.resources.ResourceManager;
+import io.strimzi.systemtest.resources.crd.KafkaBridgeResource;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.strimzi.operator.common.model.Labels;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import io.strimzi.systemtest.resources.KubernetesResource;
@@ -15,6 +19,8 @@ import io.strimzi.systemtest.resources.KubernetesResource;
 import java.util.HashMap;
 import java.util.Map;
 
+import static io.strimzi.systemtest.enums.CustomResourceStatus.NotReady;
+import static io.strimzi.systemtest.enums.CustomResourceStatus.Ready;
 import static io.strimzi.test.k8s.KubeClusterResource.kubeClient;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -36,12 +42,12 @@ public class KafkaBridgeUtils {
 
     public static Service createBridgeNodePortService(String clusterName, String namespace, String serviceName) {
         Map<String, String> map = new HashMap<>();
-        map.put("strimzi.io/cluster", clusterName);
-        map.put("strimzi.io/kind", "KafkaBridge");
-        map.put("strimzi.io/name", clusterName + "-bridge");
+        map.put(Labels.STRIMZI_CLUSTER_LABEL, clusterName);
+        map.put(Labels.STRIMZI_KIND_LABEL, "KafkaBridge");
+        map.put(Labels.STRIMZI_NAME_LABEL, clusterName + "-bridge");
 
         // Create node port service for expose bridge outside Kubernetes
-        return KubernetesResource.getSystemtestsServiceResource(serviceName, Constants.HTTP_BRIDGE_DEFAULT_PORT, namespace)
+        return KubernetesResource.getSystemtestsServiceResource(serviceName, Constants.HTTP_BRIDGE_DEFAULT_PORT, namespace, "TCP")
                     .editSpec()
                         .withType("NodePort")
                         .withSelector(map)
@@ -59,5 +65,23 @@ public class KafkaBridgeUtils {
             assertThat(metadata.getInteger("offset"), is(i));
             LOGGER.debug("offset size: {}, partition: {}, offset size: {}", offsets.size(), metadata.getInteger("partition"), metadata.getLong("offset"));
         }
+    }
+
+    /**
+     * Wait until KafkaBridge is in desired state
+     * @param clusterName name of KafkaBridge cluster
+     * @param state desired state
+     */
+    public static void waitForKafkaBridgeStatus(String clusterName, Enum<?> state) {
+        KafkaBridge kafkaBridge = KafkaBridgeResource.kafkaBridgeClient().inNamespace(kubeClient().getNamespace()).withName(clusterName).get();
+        ResourceManager.waitForResourceStatus(KafkaBridgeResource.kafkaBridgeClient(), kafkaBridge, state);
+    }
+
+    public static void waitForKafkaBridgeReady(String clusterName) {
+        waitForKafkaBridgeStatus(clusterName, Ready);
+    }
+
+    public static void waitForKafkaBridgeNotReady(String clusterName) {
+        waitForKafkaBridgeStatus(clusterName, NotReady);
     }
 }

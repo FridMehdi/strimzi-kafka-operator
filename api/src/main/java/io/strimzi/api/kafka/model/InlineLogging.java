@@ -9,7 +9,6 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import io.strimzi.crdgenerator.annotations.Description;
 import io.sundr.builder.annotations.Buildable;
 
-import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -17,8 +16,7 @@ import java.util.Map;
  */
 @Buildable(
         editableEnabled = false,
-        generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder"
+        builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @JsonPropertyOrder({"type", "loggers"})
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -28,7 +26,7 @@ public class InlineLogging extends Logging {
 
     public static final String TYPE_INLINE = "inline";
 
-    private Map<String, String> loggers = new HashMap<>();
+    private Map<String, String> loggers = null;
 
     @Description("Must be `" + TYPE_INLINE + "`")
     @Override

@@ -24,6 +24,8 @@ spec:
     listKind: "ExampleList"
     singular: "example"
     plural: "examples"
+    categories:
+    - "strimzi"
   additionalPrinterColumns:
   - name: "Foo"
     description: "The foo"
@@ -240,6 +242,12 @@ spec:
                           type: "string"
                       topologyKey:
                         type: "string"
+        alternatives:
+          oneOf:
+          - type: "array"
+            items:
+              type: "string"
+          - type: "object"
         arrayOfBoundTypeVar:
           type: "array"
           items:
@@ -287,11 +295,13 @@ spec:
           - "two"
         fieldProperty:
           type: "string"
+          description: "Example of field property."
         intProperty:
           type: "integer"
           example: "42"
           minimum: 42
           deprecated: true
+          description: "An example int property."
         listOfArray:
           type: "array"
           items:
@@ -318,6 +328,10 @@ spec:
             type: "array"
             items:
               type: "integer"
+        listOfMaps:
+          type: "array"
+          items:
+            type: "object"
         listOfObjects:
           type: "array"
           items:
@@ -341,8 +355,10 @@ spec:
                 - "right"
               leftProperty:
                 type: "string"
+                description: "when descrim=left, the left-hand property."
               rightProperty:
                 type: "string"
+                description: "when descrim=right, the right-hand property."
             required:
             - "discrim"
         listOfRawList:
@@ -382,6 +398,7 @@ spec:
           type: "integer"
           example: "42"
           minimum: 42
+          description: "An example long property."
         mapProperty:
           type: "object"
         normalEnum:
@@ -408,8 +425,10 @@ spec:
               - "right"
             leftProperty:
               type: "string"
+              description: "when descrim=left, the left-hand property."
             rightProperty:
               type: "string"
+              description: "when descrim=right, the right-hand property."
           required:
           - "discrim"
         rawList:
@@ -420,6 +439,16 @@ spec:
         stringProperty:
           type: "string"
           pattern: ".*"
+        typedAlternatives:
+          oneOf:
+          - type: "object"
+            properties:
+              key2:
+                type: "string"
+          - type: "object"
+            properties:
+              key1:
+                type: "string"
       oneOf:
       - properties:
           either: {}

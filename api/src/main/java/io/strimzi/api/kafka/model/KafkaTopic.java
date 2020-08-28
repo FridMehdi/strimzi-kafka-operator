@@ -37,7 +37,8 @@ import static java.util.Collections.unmodifiableList;
                 names = @Crd.Spec.Names(
                         kind = KafkaTopic.RESOURCE_KIND,
                         plural = KafkaTopic.RESOURCE_PLURAL,
-                        shortNames = {KafkaTopic.SHORT_NAME}
+                        shortNames = {KafkaTopic.SHORT_NAME},
+                        categories = {Constants.STRIMZI_CATEGORY}
                 ),
                 group = KafkaTopic.RESOURCE_GROUP,
                 scope = KafkaTopic.SCOPE,
@@ -59,6 +60,12 @@ import static java.util.Collections.unmodifiableList;
                 ),
                 additionalPrinterColumns = {
                         @Crd.Spec.AdditionalPrinterColumn(
+                                name = "Cluster",
+                                description = "The name of the Kafka cluster this topic belongs to",
+                                jsonPath = ".metadata.labels.strimzi\\.io/cluster",
+                                type = "string"
+                        ),
+                        @Crd.Spec.AdditionalPrinterColumn(
                                 name = "Partitions",
                                 description = "The desired number of partitions in the topic",
                                 jsonPath = ".spec.partitions",
@@ -75,8 +82,7 @@ import static java.util.Collections.unmodifiableList;
 )
 @Buildable(
         editableEnabled = false,
-        generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder",
+        builderPackage = Constants.FABRIC8_KUBERNETES_API,
         inline = @Inline(type = Doneable.class, prefix = "Doneable", value = "done"),
         refs = {@BuildableReference(ObjectMeta.class)}
 )
@@ -88,15 +94,15 @@ public class KafkaTopic extends CustomResource implements UnknownPropertyPreserv
     private static final long serialVersionUID = 1L;
 
     public static final String SCOPE = "Namespaced";
-    public static final String V1ALPHA1 = "v1alpha1";
-    public static final String V1BETA1 = "v1beta1";
+    public static final String V1ALPHA1 = Constants.V1ALPHA1;
+    public static final String V1BETA1 = Constants.V1BETA1;
     public static final List<String> VERSIONS = unmodifiableList(asList(V1BETA1, V1ALPHA1));
     public static final String RESOURCE_KIND = "KafkaTopic";
     public static final String RESOURCE_LIST_KIND = RESOURCE_KIND + "List";
-    public static final String RESOURCE_GROUP = "kafka.strimzi.io";
+    public static final String RESOURCE_GROUP = Constants.RESOURCE_GROUP_NAME;
     public static final String RESOURCE_PLURAL = "kafkatopics";
     public static final String RESOURCE_SINGULAR = "kafkatopic";
-    public static final String CRD_API_VERSION = "apiextensions.k8s.io/v1beta1";
+    public static final String CRD_API_VERSION = Constants.V1BETA1_API_VERSION;
     public static final String CRD_NAME = RESOURCE_PLURAL + "." + RESOURCE_GROUP;
     public static final String SHORT_NAME = "kt";
     public static final List<String> RESOURCE_SHORTNAMES = singletonList(SHORT_NAME);
@@ -154,7 +160,7 @@ public class KafkaTopic extends CustomResource implements UnknownPropertyPreserv
     @Override
     public void setAdditionalProperty(String name, Object value) {
         if (this.additionalProperties == null) {
-            this.additionalProperties = new HashMap<>();
+            this.additionalProperties = new HashMap<>(1);
         }
         this.additionalProperties.put(name, value);
     }

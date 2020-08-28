@@ -14,6 +14,7 @@ import io.strimzi.api.annotations.DeprecatedProperty;
 import io.strimzi.api.kafka.model.template.KafkaMirrorMakerTemplate;
 import io.strimzi.api.kafka.model.tracing.Tracing;
 import io.strimzi.crdgenerator.annotations.Description;
+import io.strimzi.crdgenerator.annotations.DescriptionFile;
 import io.strimzi.crdgenerator.annotations.KubeLink;
 import io.strimzi.crdgenerator.annotations.Minimum;
 import io.sundr.builder.annotations.Buildable;
@@ -24,10 +25,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@DescriptionFile
 @Buildable(
         editableEnabled = false,
-        generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder"
+        builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonPropertyOrder({
@@ -40,7 +41,10 @@ public class KafkaMirrorMakerSpec implements UnknownPropertyPreserving, Serializ
 
     private static final long serialVersionUID = 1L;
 
-    private int replicas;
+    private static final int DEFAULT_REPLICAS = 3;
+
+    private int replicas = DEFAULT_REPLICAS;
+
     private String version;
     private String image;
     private String whitelist;
@@ -59,7 +63,7 @@ public class KafkaMirrorMakerSpec implements UnknownPropertyPreserving, Serializ
     private Map<String, Object> additionalProperties = new HashMap<>(0);
 
     @Description("The number of pods in the `Deployment`.")
-    @Minimum(1)
+    @Minimum(0)
     @JsonProperty(required = true)
     public int getReplicas() {
         return replicas;
@@ -69,7 +73,7 @@ public class KafkaMirrorMakerSpec implements UnknownPropertyPreserving, Serializ
         this.replicas = replicas;
     }
 
-    @Description("The Kafka Mirror Maker version. Defaults to {DefaultKafkaVersion}. " +
+    @Description("The Kafka MirrorMaker version. Defaults to {DefaultKafkaVersion}. " +
             "Consult the documentation to understand the process required to upgrade or downgrade the version.")
     public String getVersion() {
         return version;
@@ -133,7 +137,7 @@ public class KafkaMirrorMakerSpec implements UnknownPropertyPreserving, Serializ
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    @Description("The configuration of tracing in Kafka Mirror Maker.")
+    @Description("The configuration of tracing in Kafka MirrorMaker.")
     public Tracing getTracing() {
         return tracing;
     }
@@ -142,7 +146,7 @@ public class KafkaMirrorMakerSpec implements UnknownPropertyPreserving, Serializ
         this.tracing = tracing;
     }
 
-    @Description("Logging configuration for Mirror Maker.")
+    @Description("Logging configuration for MirrorMaker.")
     @JsonInclude(value = JsonInclude.Include.NON_NULL)
     public Logging getLogging() {
         return logging;
@@ -191,6 +195,7 @@ public class KafkaMirrorMakerSpec implements UnknownPropertyPreserving, Serializ
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
+    @KubeLink(group = "core", version = "v1", kind = "resourcerequirements")
     @Description("CPU and memory resources to reserve.")
     public ResourceRequirements getResources() {
         return resources;
@@ -220,7 +225,7 @@ public class KafkaMirrorMakerSpec implements UnknownPropertyPreserving, Serializ
         this.readinessProbe = readinessProbe;
     }
 
-    @Description("Template to specify how Kafka Mirror Maker resources, `Deployments` and `Pods`, are generated.")
+    @Description("Template to specify how Kafka MirrorMaker resources, `Deployments` and `Pods`, are generated.")
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
     public KafkaMirrorMakerTemplate getTemplate() {
         return template;

@@ -19,8 +19,7 @@ import static java.util.Collections.emptyMap;
 
 @Buildable(
         editableEnabled = false,
-        generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder"
+        builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @EqualsAndHashCode
@@ -52,7 +51,7 @@ public class KafkaMirrorMakerClientSpec implements UnknownPropertyPreserving, Se
         this.config = config;
     }
 
-    @Description("TLS configuration for connecting Mirror Maker to the cluster.")
+    @Description("TLS configuration for connecting MirrorMaker to the cluster.")
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public KafkaMirrorMakerTls getTls() {
         return tls;
@@ -80,7 +79,7 @@ public class KafkaMirrorMakerClientSpec implements UnknownPropertyPreserving, Se
     @Override
     public void setAdditionalProperty(String name, Object value) {
         if (this.additionalProperties == null) {
-            this.additionalProperties = new HashMap<>();
+            this.additionalProperties = new HashMap<>(1);
         }
         this.additionalProperties.put(name, value);
     }

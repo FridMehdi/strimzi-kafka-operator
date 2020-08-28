@@ -4,6 +4,14 @@
  */
 package io.strimzi.operator.cluster.operator.resource;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiPredicate;
+import java.util.function.Function;
+
+import io.fabric8.kubernetes.api.model.DeletionPropagation;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaimBuilder;
 import io.fabric8.kubernetes.api.model.Pod;
@@ -36,16 +44,11 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.exceptions.base.MockitoException;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.BiPredicate;
-import java.util.function.Predicate;
-
-import static org.hamcrest.MatcherAssert.assertThat;
+import static java.util.Collections.singletonList;
+import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -96,7 +99,7 @@ public class StatefulSetOperatorTest
     protected StatefulSetOperator createResourceOperations(Vertx vertx, KubernetesClient mockClient) {
         return new StatefulSetOperator(vertx, mockClient, 60_000L) {
             @Override
-            public Future<Void> maybeRollingUpdate(StatefulSet sts, Predicate<Pod> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
+            public Future<Void> maybeRollingUpdate(StatefulSet sts, Function<Pod, List<String>> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
                 return Future.succeededFuture();
             }
 
@@ -111,7 +114,7 @@ public class StatefulSetOperatorTest
     protected StatefulSetOperator createResourceOperationsWithMockedReadiness(Vertx vertx, KubernetesClient mockClient) {
         return new StatefulSetOperator(vertx, mockClient, 60_000L) {
             @Override
-            public Future<Void> maybeRollingUpdate(StatefulSet sts, Predicate<Pod> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
+            public Future<Void> maybeRollingUpdate(StatefulSet sts, Function<Pod, List<String>> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
                 return Future.succeededFuture();
             }
 
@@ -134,12 +137,12 @@ public class StatefulSetOperatorTest
 
     @Override
     @Test
-    public void createWhenExistsIsAPatch(VertxTestContext context) {
+    public void testCreateWhenExistsIsAPatch(VertxTestContext context) {
         createWhenExistsIsAPatch(context, false);
     }
 
     @Test
-    public void rollingUpdateSuccess() {
+    public void testRollingUpdateSuccess(VertxTestContext context) {
         StatefulSet resource = resource();
         Resource mockResource = mock(resourceType());
         when(mockResource.get()).thenReturn(resource);
@@ -168,7 +171,7 @@ public class StatefulSetOperatorTest
 
         StatefulSetOperator op = new StatefulSetOperator(AbstractResourceOperatorTest.vertx, mockClient, 5_000L, podOperator, pvcOperator) {
             @Override
-            public Future<Void> maybeRollingUpdate(StatefulSet sts, Predicate<Pod> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
+            public Future<Void> maybeRollingUpdate(StatefulSet sts, Function<Pod, List<String>> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
                 return Future.succeededFuture();
             }
 
@@ -178,11 +181,13 @@ public class StatefulSetOperatorTest
             }
         };
 
-        Future result = op.maybeRestartPod(resource, "my-pod-0", pod -> true);
-        assertThat(result.succeeded(), is(true));
+        Checkpoint a = context.checkpoint();
+        op.maybeRestartPod(resource, "my-pod-0", pod -> singletonList("roll"))
+            .onComplete(context.succeeding(v -> a.flag()));
     }
+
     @Test
-    public void rollingUpdateDeletionTimeout() {
+    public void testRollingUpdateDeletionTimeout(VertxTestContext context) {
         StatefulSet resource = resource();
         Resource mockResource = mock(resourceType());
         when(mockResource.get()).thenReturn(resource);
@@ -217,7 +222,7 @@ public class StatefulSetOperatorTest
 
         StatefulSetOperator op = new StatefulSetOperator(AbstractResourceOperatorTest.vertx, mockClient, 5_000L, podOperator, pvcOperator) {
             @Override
-            public Future<Void> maybeRollingUpdate(StatefulSet sts, Predicate<Pod> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
+            public Future<Void> maybeRollingUpdate(StatefulSet sts, Function<Pod, List<String>> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
                 return Future.succeededFuture();
             }
 
@@ -227,13 +232,16 @@ public class StatefulSetOperatorTest
             }
         };
 
-        Future result = op.maybeRestartPod(resource, "my-pod-0", pod -> true);
-        assertThat(result.failed(), is(true));
-        assertThat(result.cause() instanceof TimeoutException, is(true));
+        Checkpoint a = context.checkpoint();
+        op.maybeRestartPod(resource, "my-pod-0", pod -> singletonList("roll"))
+            .onComplete(context.failing(e -> context.verify(() -> {
+                assertThat(e, instanceOf(TimeoutException.class));
+                a.flag();
+            })));
     }
 
     @Test
-    public void rollingUpdateReadinessTimeout() {
+    public void testRollingUpdateReadinessTimeout(VertxTestContext context) {
         StatefulSet resource = resource();
         Resource mockResource = mock(resourceType());
         when(mockResource.get()).thenReturn(resource);
@@ -262,7 +270,7 @@ public class StatefulSetOperatorTest
 
         StatefulSetOperator op = new StatefulSetOperator(AbstractResourceOperatorTest.vertx, mockClient, 5_000L, podOperator, pvcOperator) {
             @Override
-            public Future<Void> maybeRollingUpdate(StatefulSet sts, Predicate<Pod> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
+            public Future<Void> maybeRollingUpdate(StatefulSet sts, Function<Pod, List<String>> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
                 return Future.succeededFuture();
             }
             @Override
@@ -271,13 +279,15 @@ public class StatefulSetOperatorTest
             }
         };
 
-        Future result = op.maybeRestartPod(resource, "my-pod-0", pod -> true);
-        assertThat(result.failed(), is(true));
-        assertThat(result.cause() instanceof TimeoutException, is(true));
+        Checkpoint a = context.checkpoint();
+        op.maybeRestartPod(resource, "my-pod-0", pod -> singletonList("roll")).onComplete(context.failing(e -> context.verify(() -> {
+            assertThat(e, instanceOf(TimeoutException.class));
+            a.flag();
+        })));
     }
 
     @Test
-    public void rollingUpdateReconcileFailed() {
+    public void testRollingUpdateReconcileFailed(VertxTestContext context) {
         StatefulSet resource = resource();
         Resource mockResource = mock(resourceType());
         when(mockResource.get()).thenReturn(resource);
@@ -305,7 +315,7 @@ public class StatefulSetOperatorTest
 
         StatefulSetOperator op = new StatefulSetOperator(AbstractResourceOperatorTest.vertx, mockClient, 5_000L, podOperator, pvcOperator) {
             @Override
-            public Future<Void> maybeRollingUpdate(StatefulSet sts, Predicate<Pod> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
+            public Future<Void> maybeRollingUpdate(StatefulSet sts, Function<Pod, List<String>> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
                 return Future.succeededFuture();
             }
             @Override
@@ -314,9 +324,12 @@ public class StatefulSetOperatorTest
             }
         };
 
-        Future result = op.maybeRestartPod(resource, "my-pod-0", pod -> true);
-        assertThat(result.failed(), is(true));
-        assertThat(result.cause().getMessage().equals("reconcile failed"), is(true));
+        Checkpoint a = context.checkpoint();
+        op.maybeRestartPod(resource, "my-pod-0", pod -> singletonList("roll"))
+            .onComplete(context.failing(e -> context.verify(() -> {
+                assertThat(e.getMessage(), is("reconcile failed"));
+                a.flag();
+            })));
     }
 
     @Test
@@ -369,12 +382,14 @@ public class StatefulSetOperatorTest
         Deletable mockDeletable = mock(Deletable.class);
         when(mockDeletable.delete()).thenReturn(Boolean.TRUE);
 
-        EditReplacePatchDeletable mockERPD = mock(EditReplacePatchDeletable.class);
+        Resource mockERPD = mock(resourceType());
+        when(mockERPD.withPropagationPolicy(any(DeletionPropagation.class))).thenReturn(mockDeletable);
         when(mockERPD.withGracePeriod(anyLong())).thenReturn(mockDeletable);
 
         Resource mockResource = mock(resourceType());
         when(mockResource.get()).thenReturn(sts1);
-        when(mockResource.cascading(eq(false))).thenReturn(mockERPD);
+        when(mockResource.withPropagationPolicy(eq(DeletionPropagation.ORPHAN))).thenReturn(mockERPD);
+        when(mockResource.create(any(StatefulSet.class))).thenReturn(sts1);
 
         PodOperator podOperator = mock(PodOperator.class);
         when(podOperator.waitFor(anyString(), anyString(), anyLong(), anyLong(), any(BiPredicate.class))).thenReturn(Future.succeededFuture());
@@ -396,7 +411,7 @@ public class StatefulSetOperatorTest
 
         StatefulSetOperator op = new StatefulSetOperator(AbstractResourceOperatorTest.vertx, mockClient, 5_000L, podOperator, pvcOperator) {
             @Override
-            public Future<Void> maybeRollingUpdate(StatefulSet sts, Predicate<Pod> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
+            public Future<Void> maybeRollingUpdate(StatefulSet sts, Function<Pod, List<String>> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
                 return Future.succeededFuture();
             }
 
@@ -406,18 +421,17 @@ public class StatefulSetOperatorTest
             }
 
             @Override
-            public Future<Void> waitFor(String namespace, String name, long pollIntervalMs, final long timeoutMs, BiPredicate<String, String> predicate) {
+            public Future<Void> waitFor(String namespace, String name, String logState, long pollIntervalMs, final long timeoutMs, BiPredicate<String, String> predicate) {
                 return Future.succeededFuture();
             }
         };
 
         Checkpoint async = context.checkpoint();
-        op.reconcile(sts1.getMetadata().getNamespace(), sts1.getMetadata().getName(), sts2).setHandler(ar -> {
-            if (ar.failed()) ar.cause().printStackTrace();
-            context.verify(() -> assertThat(ar.succeeded(), is(true)));
-            verify(mockDeletable).delete();
-            async.flag();
-        });
+        op.reconcile(sts1.getMetadata().getNamespace(), sts1.getMetadata().getName(), sts2)
+            .onComplete(context.succeeding(rrState -> {
+                verify(mockDeletable).delete();
+                async.flag();
+            }));
     }
 
     @Test
@@ -425,12 +439,13 @@ public class StatefulSetOperatorTest
         Deletable mockDeletable = mock(Deletable.class);
         when(mockDeletable.delete()).thenReturn(Boolean.TRUE);
 
-        EditReplacePatchDeletable mockERPD = mock(EditReplacePatchDeletable.class);
+        Resource mockERPD = mock(resourceType());
+        when(mockERPD.withPropagationPolicy(any(DeletionPropagation.class))).thenReturn(mockDeletable);
         when(mockERPD.withGracePeriod(anyLong())).thenReturn(mockDeletable);
 
         RollableScalableResource mockRSR = mock(RollableScalableResource.class);
-        ArgumentCaptor<Boolean> cascadingCaptor = ArgumentCaptor.forClass(Boolean.class);
-        when(mockRSR.cascading(cascadingCaptor.capture())).thenReturn(mockERPD);
+        ArgumentCaptor<DeletionPropagation> cascadingCaptor = ArgumentCaptor.forClass(DeletionPropagation.class);
+        when(mockRSR.withPropagationPolicy(cascadingCaptor.capture())).thenReturn(mockERPD);
 
         NonNamespaceOperation mockNameable = mock(NonNamespaceOperation.class);
         when(mockNameable.withName(matches(RESOURCE_NAME))).thenReturn(mockRSR);
@@ -446,7 +461,7 @@ public class StatefulSetOperatorTest
 
         StatefulSetOperator op = new StatefulSetOperator(AbstractResourceOperatorTest.vertx, mockClient, 5_000L, podOperator, pvcOperator) {
             @Override
-            public Future<Void> maybeRollingUpdate(StatefulSet sts, Predicate<Pod> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
+            public Future<Void> maybeRollingUpdate(StatefulSet sts, Function<Pod, List<String>> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
                 return Future.succeededFuture();
             }
 
@@ -457,14 +472,11 @@ public class StatefulSetOperatorTest
         };
 
         Checkpoint async = context.checkpoint();
-        op.deleteAsync(NAMESPACE, RESOURCE_NAME, true).setHandler(res -> {
-            if (res.succeeded())    {
-                context.verify(() -> assertThat(cascadingCaptor.getValue(), is(true)));
-            } else {
-                context.failNow(new Throwable());
-            }
-            async.flag();
-        });
+        op.deleteAsync(NAMESPACE, RESOURCE_NAME, true)
+            .onComplete(context.succeeding(v -> context.verify(() -> {
+                assertThat(cascadingCaptor.getValue(), is(DeletionPropagation.FOREGROUND));
+                async.flag();
+            })));
     }
 
     @Test
@@ -472,12 +484,13 @@ public class StatefulSetOperatorTest
         Deletable mockDeletable = mock(Deletable.class);
         when(mockDeletable.delete()).thenReturn(Boolean.TRUE);
 
-        EditReplacePatchDeletable mockERPD = mock(EditReplacePatchDeletable.class);
+        Resource mockERPD = mock(resourceType());
+        when(mockERPD.withPropagationPolicy(any(DeletionPropagation.class))).thenReturn(mockDeletable);
         when(mockERPD.withGracePeriod(anyLong())).thenReturn(mockDeletable);
 
         RollableScalableResource mockRSR = mock(RollableScalableResource.class);
-        ArgumentCaptor<Boolean> cascadingCaptor = ArgumentCaptor.forClass(Boolean.class);
-        when(mockRSR.cascading(cascadingCaptor.capture())).thenReturn(mockERPD);
+        ArgumentCaptor<DeletionPropagation> cascadingCaptor = ArgumentCaptor.forClass(DeletionPropagation.class);
+        when(mockRSR.withPropagationPolicy(cascadingCaptor.capture())).thenReturn(mockERPD);
 
         NonNamespaceOperation mockNameable = mock(NonNamespaceOperation.class);
         when(mockNameable.withName(matches(RESOURCE_NAME))).thenReturn(mockRSR);
@@ -493,7 +506,7 @@ public class StatefulSetOperatorTest
 
         StatefulSetOperator op = new StatefulSetOperator(AbstractResourceOperatorTest.vertx, mockClient, 5_000L, podOperator, pvcOperator) {
             @Override
-            public Future<Void> maybeRollingUpdate(StatefulSet sts, Predicate<Pod> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
+            public Future<Void> maybeRollingUpdate(StatefulSet sts, Function<Pod, List<String>> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
                 return Future.succeededFuture();
             }
 
@@ -503,15 +516,12 @@ public class StatefulSetOperatorTest
             }
         };
 
-        Checkpoint async = context.checkpoint();
-        op.deleteAsync(NAMESPACE, RESOURCE_NAME, false).setHandler(res -> {
-            if (res.succeeded())    {
-                context.verify(() -> assertThat(cascadingCaptor.getValue(), is(false)));
-            } else {
-                context.failNow(new Throwable());
-            }
-            async.flag();
-        });
+        Checkpoint a = context.checkpoint();
+        op.deleteAsync(NAMESPACE, RESOURCE_NAME, false)
+            .onComplete(context.succeeding(v -> context.verify(() -> {
+                assertThat(cascadingCaptor.getValue(), is(DeletionPropagation.ORPHAN));
+                a.flag();
+            })));
     }
 
     @Test
@@ -520,7 +530,7 @@ public class StatefulSetOperatorTest
         when(mockERPD.delete()).thenReturn(Boolean.FALSE);
 
         RollableScalableResource mockRSR = mock(RollableScalableResource.class);
-        when(mockRSR.cascading(anyBoolean())).thenReturn(mockERPD);
+        when(mockRSR.withPropagationPolicy(any(DeletionPropagation.class))).thenReturn(mockERPD);
 
         NonNamespaceOperation mockNameable = mock(NonNamespaceOperation.class);
         when(mockNameable.withName(matches(RESOURCE_NAME))).thenReturn(mockRSR);
@@ -536,7 +546,7 @@ public class StatefulSetOperatorTest
 
         StatefulSetOperator op = new StatefulSetOperator(AbstractResourceOperatorTest.vertx, mockClient, 5_000L, podOperator, pvcOperator) {
             @Override
-            public Future<Void> maybeRollingUpdate(StatefulSet sts, Predicate<Pod> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
+            public Future<Void> maybeRollingUpdate(StatefulSet sts, Function<Pod, List<String>> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
                 return Future.succeededFuture();
             }
 
@@ -546,13 +556,9 @@ public class StatefulSetOperatorTest
             }
         };
 
-        Checkpoint async = context.checkpoint();
-        op.deleteAsync(NAMESPACE, RESOURCE_NAME, false).setHandler(res -> {
-            if (res.succeeded())    {
-                context.failNow(new Throwable());
-            }
-            async.flag();
-        });
+        Checkpoint a = context.checkpoint();
+        op.deleteAsync(NAMESPACE, RESOURCE_NAME, false)
+            .onComplete(context.failing(e -> a.flag()));
     }
 
     @Test
@@ -560,11 +566,12 @@ public class StatefulSetOperatorTest
         Deletable mockDeletable = mock(Deletable.class);
         when(mockDeletable.delete()).thenThrow(new MockitoException("Something failed"));
 
-        EditReplacePatchDeletable mockERPD = mock(EditReplacePatchDeletable.class);
+        Resource mockERPD = mock(resourceType());
+        when(mockERPD.withPropagationPolicy(any(DeletionPropagation.class))).thenReturn(mockDeletable);
         when(mockERPD.withGracePeriod(anyLong())).thenReturn(mockDeletable);
 
         RollableScalableResource mockRSR = mock(RollableScalableResource.class);
-        when(mockRSR.cascading(anyBoolean())).thenReturn(mockERPD);
+        when(mockRSR.withPropagationPolicy(any(DeletionPropagation.class))).thenReturn(mockERPD);
 
         NonNamespaceOperation mockNameable = mock(NonNamespaceOperation.class);
         when(mockNameable.withName(matches(RESOURCE_NAME))).thenReturn(mockRSR);
@@ -580,7 +587,7 @@ public class StatefulSetOperatorTest
 
         StatefulSetOperator op = new StatefulSetOperator(AbstractResourceOperatorTest.vertx, mockClient, 5_000L, podOperator, pvcOperator) {
             @Override
-            public Future<Void> maybeRollingUpdate(StatefulSet sts, Predicate<Pod> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
+            public Future<Void> maybeRollingUpdate(StatefulSet sts, Function<Pod, List<String>> podNeedsRestart, Secret clusterCaSecret, Secret coKeySecret) {
                 return Future.succeededFuture();
             }
 
@@ -591,14 +598,11 @@ public class StatefulSetOperatorTest
         };
 
         Checkpoint async = context.checkpoint();
-        op.deleteAsync(NAMESPACE, RESOURCE_NAME, false).setHandler(res -> {
-            if (res.succeeded())    {
-                context.failNow(new Throwable());
-            } else {
-                context.verify(() -> assertThat("org.mockito.exceptions.base.MockitoException".equals(res.cause().getClass().getName()), is(true)));
-                context.verify(() -> assertThat("Something failed".equals(res.cause().getMessage()), is(true)));
-            }
-            async.flag();
-        });
+        op.deleteAsync(NAMESPACE, RESOURCE_NAME, false)
+            .onComplete(context.failing(e -> context.verify(() -> {
+                assertThat(e, instanceOf(MockitoException.class));
+                assertThat(e.getMessage(), is("Something failed"));
+                async.flag();
+            })));
     }
 }

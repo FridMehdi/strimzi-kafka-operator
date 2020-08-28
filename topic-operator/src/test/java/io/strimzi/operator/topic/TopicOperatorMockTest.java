@@ -7,24 +7,31 @@ package io.strimzi.operator.topic;
 import io.debezium.kafka.KafkaCluster;
 import io.debezium.kafka.ZookeeperServer;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.micrometer.prometheus.PrometheusMeterRegistry;
 import io.strimzi.api.kafka.Crds;
 import io.strimzi.api.kafka.KafkaTopicList;
 import io.strimzi.api.kafka.model.DoneableKafkaTopic;
 import io.strimzi.api.kafka.model.KafkaTopic;
 import io.strimzi.api.kafka.model.KafkaTopicBuilder;
+import io.strimzi.operator.common.model.Labels;
 import io.strimzi.test.mockkube.MockKube;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.VertxOptions;
 import io.vertx.junit5.Checkpoint;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
+import io.vertx.micrometer.MicrometerMetricsOptions;
+import io.vertx.micrometer.VertxPrometheusOptions;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,6 +41,7 @@ import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
@@ -42,7 +50,6 @@ import static io.strimzi.test.TestUtils.waitFor;
 import static java.util.Arrays.asList;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 @ExtendWith(VertxExtension.class)
 public class TopicOperatorMockTest {
@@ -52,34 +59,38 @@ public class TopicOperatorMockTest {
     private KubernetesClient kubeClient;
     private Session session;
     private KafkaCluster kafkaCluster;
-    private Vertx vertx;
+    private static Vertx vertx;
     private String deploymentId;
     private AdminClient adminClient;
     private TopicConfigsWatcher topicsConfigWatcher;
     private ZkTopicWatcher topicWatcher;
+    private PrometheusMeterRegistry metrics;
     private ZkTopicsWatcher topicsWatcher;
 
     // TODO this is all in common with TOIT, so factor out a common base class
 
-    @AfterEach
-    public void tearDown() {
-        if (vertx != null && deploymentId != null) {
-            vertx.undeploy(deploymentId);
-        }
-        if (adminClient != null) {
-            adminClient.close();
-        }
-        if (kafkaCluster != null) {
-            kafkaCluster.shutdown();
-        }
+    @BeforeAll
+    public static void before() {
+        VertxOptions options = new VertxOptions().setMetricsOptions(
+                new MicrometerMetricsOptions()
+                        .setPrometheusOptions(new VertxPrometheusOptions().setEnabled(true))
+                        .setEnabled(true));
+        vertx = Vertx.vertx(options);
+    }
+
+    @AfterAll
+    public static void after() throws InterruptedException {
+        CountDownLatch latch = new CountDownLatch(1);
+        vertx.close(closed -> {
+            latch.countDown();
+        });
+        latch.await(30, TimeUnit.SECONDS);
     }
 
     @BeforeEach
     public void createMockKube(VertxTestContext context) throws Exception {
-        assumeTrue(System.getenv("TRAVIS") == null, "This test is flaky on Travis, for unknown reasons");
-        vertx = Vertx.vertx();
         MockKube mockKube = new MockKube();
-        mockKube.withCustomResourceDefinition(Crds.topic(),
+        mockKube.withCustomResourceDefinition(Crds.kafkaTopic(),
                         KafkaTopic.class, KafkaTopicList.class, DoneableKafkaTopic.class);
         kubeClient = mockKube.build();
 
@@ -109,6 +120,10 @@ public class TopicOperatorMockTest {
                 topicsConfigWatcher = session.topicConfigsWatcher;
                 topicWatcher = session.topicWatcher;
                 topicsWatcher = session.topicsWatcher;
+                metrics = session.metricsRegistry;
+                metrics.forEachMeter(meter -> {
+                    metrics.remove(meter);
+                });
                 async.flag();
             } else {
                 ar.cause().printStackTrace();
@@ -129,6 +144,37 @@ public class TopicOperatorMockTest {
             () -> this.topicsWatcher.started());
         //waitFor(context, () -> this.topicsConfigWatcher.started(), timeout, "Topic configs watcher not started");
         //waitFor(context, () -> this.topicWatcher.started(), timeout, "Topic watcher not started");
+    }
+
+    @AfterEach
+    public void tearDown(VertxTestContext context) throws InterruptedException {
+        CountDownLatch latch = new CountDownLatch(1);
+        if (vertx != null && deploymentId != null) {
+            vertx.undeploy(deploymentId, undeployResult -> {
+                topicWatcher.stop();
+                topicsWatcher.stop();
+                topicsConfigWatcher.stop();
+                metrics.close();
+                waitFor("Topic watcher stopped",  1_000, 30_000,
+                    () -> !this.topicWatcher.started());
+                waitFor("Topic configs watcher stopped", 1_000, 30_000,
+                    () -> !this.topicsConfigWatcher.started());
+                waitFor("Topic watcher stopped", 1_000, 30_000,
+                    () -> !this.topicsWatcher.started());
+                waitFor("Metrics watcher stopped", 1_000, 30_000,
+                    () -> this.metrics.isClosed());
+                if (adminClient != null) {
+                    adminClient.close();
+                }
+                if (kafkaCluster != null) {
+                    kafkaCluster.shutdown();
+                    waitFor("stop kafka cluster", 1_000, 30_000, () -> !kafkaCluster.isRunning());
+                }
+                latch.countDown();
+            });
+        }
+        latch.await(30, TimeUnit.SECONDS);
+        context.completeNow();
     }
 
     private static int zkPort(KafkaCluster cluster) {
@@ -160,8 +206,8 @@ public class TopicOperatorMockTest {
         KafkaTopic kt = new KafkaTopicBuilder()
                 .withNewMetadata()
                 .withName("my-topic")
-                .addToLabels("strimzi.io/kind", "topic")
-                .addToLabels(io.strimzi.operator.common.model.Labels.KUBERNETES_NAME_LABEL, io.strimzi.operator.common.model.Labels.KUBERNETES_NAME)
+                .addToLabels(Labels.STRIMZI_KIND_LABEL, "topic")
+                .addToLabels(Labels.KUBERNETES_NAME_LABEL, "topic-operator")
                 .endMetadata()
                 .withNewSpec()
                 .withPartitions(1)
@@ -217,7 +263,7 @@ public class TopicOperatorMockTest {
         AtomicReference<Topic> ref = new AtomicReference<>();
         Checkpoint async = context.checkpoint();
         Future<TopicMetadata> kafkaMetadata = session.kafka.topicMetadata(new TopicName(topicName));
-        kafkaMetadata.map(metadata -> TopicSerialization.fromTopicMetadata(metadata)).setHandler(fromKafka -> {
+        kafkaMetadata.map(metadata -> TopicSerialization.fromTopicMetadata(metadata)).onComplete(fromKafka -> {
             if (fromKafka.succeeded()) {
                 ref.set(fromKafka.result());
             } else {
@@ -256,7 +302,7 @@ public class TopicOperatorMockTest {
 
     void reconcile(VertxTestContext context) throws InterruptedException {
         Checkpoint async = context.checkpoint();
-        session.topicOperator.reconcileAllTopics("test").setHandler(ar -> {
+        session.topicOperator.reconcileAllTopics("test").onComplete(ar -> {
             if (!ar.succeeded()) {
                 context.failNow(ar.cause());
             }
@@ -275,7 +321,7 @@ public class TopicOperatorMockTest {
         KafkaTopic kt = new KafkaTopicBuilder()
                 .withNewMetadata()
                 .withName("my-topic")
-                .addToLabels("strimzi.io/kind", "topic")
+                .addToLabels(Labels.STRIMZI_KIND_LABEL, "topic")
                 .endMetadata()
                 .withNewSpec()
                 .withTopicName("my-topic") // the same as metadata.name
@@ -293,7 +339,7 @@ public class TopicOperatorMockTest {
         KafkaTopic kt = new KafkaTopicBuilder()
                 .withNewMetadata()
                 .withName("my-topic")
-                .addToLabels("strimzi.io/kind", "topic")
+                .addToLabels(Labels.STRIMZI_KIND_LABEL, "topic")
                 .endMetadata()
                 .withNewSpec()
                     .withTopicName("DIFFERENT") // different to metadata.name

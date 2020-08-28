@@ -17,6 +17,8 @@ import com.fasterxml.jackson.databind.node.TextNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import io.fabric8.kubernetes.client.CustomResource;
+import io.strimzi.crdgenerator.annotations.Alternation;
+import io.strimzi.crdgenerator.annotations.Alternative;
 import io.strimzi.crdgenerator.annotations.Crd;
 import io.strimzi.crdgenerator.annotations.Description;
 import io.strimzi.crdgenerator.annotations.Example;
@@ -63,7 +65,7 @@ import static java.util.Collections.emptyMap;
  * <p>The tool works by recursing through class properties (in the JavaBeans sense)
  * and the types of those properties, guided by the annotations.</p>
  *
- * <h3>Annotations</h3>
+ * <h2>Annotations</h2>
  * <dl>
  *     <dt>@{@link Crd}</dt>
  *     <dd>Annotates the top level class which represents an instance of the custom resource.
@@ -121,7 +123,7 @@ import static java.util.Collections.emptyMap;
  *
  * </dl>
  *
- * <h3>Polymorphism</h3>
+ * <h2>Polymorphism</h2>
  * <p>Although true OpenAPI Schema Objects have some support for polymorphism via
  * {@code discriminator} and {@code oneOf}, CRD validation schemas don't support
  * {@code discriminator} or references which means CRD validation
@@ -254,11 +256,31 @@ public class CrdGenerator {
             result.set("additionalPrinterColumns", cols);
         }
         if (crd.subresources().status().length != 0) {
-            ObjectNode statusNode = nf.objectNode();
-            if (crd.subresources().status().length > 0) {
-                statusNode.set("status", nf.objectNode());
+            ObjectNode subresources = nf.objectNode();
+
+            if (crd.subresources().status().length == 1) {
+                subresources.set("status", nf.objectNode());
+            } else if (crd.subresources().status().length > 1)  {
+                throw new RuntimeException("Each custom resource definition can have only one status sub-resource.");
             }
-            result.set("subresources", statusNode);
+
+            if (crd.subresources().scale().length == 1) {
+                Crd.Spec.Subresources.Scale scale = crd.subresources().scale()[0];
+
+                ObjectNode scaleNode = nf.objectNode();
+                scaleNode.put("specReplicasPath", scale.specReplicasPath());
+                scaleNode.put("statusReplicasPath", scale.statusReplicasPath());
+
+                if (!scale.labelSelectorPath().isEmpty()) {
+                    scaleNode.put("labelSelectorPath", scale.labelSelectorPath());
+                }
+
+                subresources.set("scale", scaleNode);
+            } else if (crd.subresources().scale().length > 1)  {
+                throw new RuntimeException("Each custom resource definition can have only one scale sub-resource.");
+            }
+
+            result.set("subresources", subresources);
         }
         result.set("validation", buildValidation(crdClass));
         return result;
@@ -282,6 +304,10 @@ public class CrdGenerator {
 
         if (names.shortNames().length > 0) {
             result.set("shortNames", stringArray(asList(names.shortNames())));
+        }
+
+        if (names.categories().length > 0) {
+            result.set("categories", stringArray(asList(names.categories())));
         }
         return result;
     }
@@ -442,9 +468,33 @@ public class CrdGenerator {
     private ObjectNode buildSchemaProperties(Class<?> crdClass) {
         ObjectNode properties = nf.objectNode();
         for (Property property : unionOfSubclassProperties(crdClass)) {
-            buildProperty(properties, property);
+            if (property.getType().getType().isAnnotationPresent(Alternation.class)) {
+                List<Property> alternatives = property.getAlternatives();
+                if (alternatives.size() < 2) {
+                    err("Class " + property.getType().getType().getName() + " is annotated with " +
+                            "@" + Alternation.class.getSimpleName() + " but has less than two " +
+                            "@" + Alternative.class.getSimpleName() + "-annotated properties");
+                }
+                buildMultiTypeProperty(properties, property, alternatives);
+            } else {
+                buildProperty(properties, property);
+            }
         }
         return properties;
+    }
+
+
+
+    private void buildMultiTypeProperty(ObjectNode properties, Property property, List<Property> alternatives) {
+        ArrayNode oneOfAlternatives = nf.arrayNode(alternatives.size());
+
+        for (Property alternative : alternatives)   {
+            oneOfAlternatives.add(buildSchema(alternative));
+        }
+
+        ObjectNode oneOf = nf.objectNode();
+        oneOf.set("oneOf", oneOfAlternatives);
+        properties.set(property.getName(), oneOf);
     }
 
     private void buildProperty(ObjectNode properties, Property property) {
@@ -463,13 +513,14 @@ public class CrdGenerator {
             schema.put("type", "object");
             schema.putObject("patternProperties").set("-?[0-9]+", buildArraySchema(new PropertyType(null, ((ParameterizedType) propertyType.getGenericType()).getActualTypeArguments()[1])));
         } else if (Schema.isJsonScalarType(returnType)
-                || Map.class.equals(returnType)) {
+                || Map.class.equals(returnType)) {            
             schema = addSimpleTypeConstraints(buildBasicTypeSchema(property, returnType), property);
         } else if (returnType.isArray() || List.class.equals(returnType)) {
             schema = buildArraySchema(property.getType());
         } else {
             schema = buildObjectSchema(property, returnType);
         }
+        addDescription(schema, property);
         return schema;
     }
 
@@ -489,6 +540,8 @@ public class CrdGenerator {
                 || Long.class.equals(elementType)
                 || long.class.equals(elementType)) {
             itemResult.put("type", "integer");
+        } else if (Map.class.equals(elementType)) {
+            itemResult.put("type", "object");
         } else  {
             buildObjectSchema(itemResult, elementType, true);
         }
@@ -509,6 +562,13 @@ public class CrdGenerator {
 
 
         return result;
+    }
+
+    private void addDescription(ObjectNode result, AnnotatedElement element) {
+        if (element.isAnnotationPresent(Description.class)) {
+            Description description = element.getAnnotation(Description.class);
+            result.put("description", DocGenerator.getDescription(description));
+        }
     }
 
     @SuppressWarnings("unchecked")

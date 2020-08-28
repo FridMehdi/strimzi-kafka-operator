@@ -18,8 +18,6 @@ import org.junit.jupiter.api.Test;
 import java.util.HashMap;
 import java.util.Map;
 
-import static io.strimzi.operator.cluster.model.AbstractModel.containerEnvVars;
-import static io.strimzi.operator.cluster.model.KafkaCluster.ENV_VAR_KAFKA_ZOOKEEPER_CONNECT;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.singletonMap;
 import static org.hamcrest.CoreMatchers.is;
@@ -34,24 +32,24 @@ public class KafkaSetOperatorTest {
         ZOOKEEPER_LOG_CONFIG.setLoggers(singletonMap("kafka.root.logger.level", "OFF"));
     }
 
-    private StatefulSet a;
-    private StatefulSet b;
+    private StatefulSet currectSts;
+    private StatefulSet desiredSts;
 
     @BeforeEach
     public void before() {
-        KafkaVersion.Lookup versions = new KafkaVersion.Lookup(emptyMap(), emptyMap(), emptyMap(), emptyMap());
-        a = KafkaCluster.fromCrd(getResource(), versions).generateStatefulSet(true, null, null);
-        b = KafkaCluster.fromCrd(getResource(), versions).generateStatefulSet(true, null, null);
+        KafkaVersion.Lookup versions = new KafkaVersion.Lookup(emptyMap(), emptyMap(), emptyMap(), emptyMap(), emptyMap());
+        currectSts = KafkaCluster.fromCrd(getResource(), versions).generateStatefulSet(true, null, null);
+        desiredSts = KafkaCluster.fromCrd(getResource(), versions).generateStatefulSet(true, null, null);
     }
 
     private Kafka getResource() {
-        String clusterCmName = "foo";
-        String clusterCmNamespace = "test";
+        String kafkaName = "foo";
+        String kafkaNamespace = "test";
         int replicas = 3;
         String image = "bar";
         int healthDelay = 120;
         int healthTimeout = 30;
-        return new KafkaBuilder(ResourceUtils.createKafkaCluster(clusterCmNamespace, clusterCmName,
+        return new KafkaBuilder(ResourceUtils.createKafka(kafkaNamespace, kafkaName,
                 replicas, image, healthDelay, healthTimeout))
                 .editSpec()
                     .editKafka()
@@ -69,63 +67,55 @@ public class KafkaSetOperatorTest {
             .build();
     }
 
-    private StatefulSetDiff diff() {
-        return new StatefulSetDiff(a, b);
+    private StatefulSetDiff createDiff() {
+        return new StatefulSetDiff(currectSts, desiredSts);
     }
 
     @Test
-    public void testNotNeedsRollingUpdateIdentical() {
-        assertThat(KafkaSetOperator.needsRollingUpdate(diff()), is(false));
+    public void testNotNeedsRollingUpdateWhenIdentical() {
+        assertThat(KafkaSetOperator.needsRollingUpdate(createDiff()), is(false));
     }
 
     @Test
-    public void testNotNeedsRollingUpdateReplicas() {
-        a.getSpec().setReplicas(b.getSpec().getReplicas() + 1);
-        assertThat(KafkaSetOperator.needsRollingUpdate(diff()), is(false));
+    public void testNotNeedsRollingUpdateWhenReplicasDecrease() {
+        currectSts.getSpec().setReplicas(desiredSts.getSpec().getReplicas() + 1);
+        assertThat(KafkaSetOperator.needsRollingUpdate(createDiff()), is(false));
     }
 
     @Test
-    public void testNeedsRollingUpdateLabels() {
-        Map<String, String> labels = new HashMap(b.getMetadata().getLabels());
+    public void testNeedsRollingUpdateWhenLabelsRemoved() {
+        Map<String, String> labels = new HashMap(desiredSts.getMetadata().getLabels());
         labels.put("foo", "bar");
-        a.getMetadata().setLabels(labels);
-        assertThat(KafkaSetOperator.needsRollingUpdate(diff()), is(true));
+        currectSts.getMetadata().setLabels(labels);
+        assertThat(KafkaSetOperator.needsRollingUpdate(createDiff()), is(true));
     }
 
     @Test
-    public void testNeedsRollingUpdateImage() {
-        a.getSpec().getTemplate().getSpec().getContainers().get(0).setImage(
-                a.getSpec().getTemplate().getSpec().getContainers().get(0).getImage() + "-foo");
-        assertThat(KafkaSetOperator.needsRollingUpdate(diff()), is(true));
+    public void testNeedsRollingUpdateWhenImageChanges() {
+        String newImage = currectSts.getSpec().getTemplate().getSpec().getContainers().get(0).getImage() + "-foo";
+        currectSts.getSpec().getTemplate().getSpec().getContainers().get(0).setImage(newImage);
+        assertThat(KafkaSetOperator.needsRollingUpdate(createDiff()), is(true));
     }
 
     @Test
-    public void testNeedsRollingUpdateReadinessDelay() {
-        a.getSpec().getTemplate().getSpec().getContainers().get(0).getReadinessProbe().setInitialDelaySeconds(
-                a.getSpec().getTemplate().getSpec().getContainers().get(0).getReadinessProbe().getInitialDelaySeconds() + 1);
-        assertThat(KafkaSetOperator.needsRollingUpdate(diff()), is(true));
+    public void testNeedsRollingUpdateWhenReadinessDelayChanges() {
+        Integer newDelay = currectSts.getSpec().getTemplate().getSpec().getContainers().get(0).getReadinessProbe().getInitialDelaySeconds() + 1;
+        currectSts.getSpec().getTemplate().getSpec().getContainers().get(0).getReadinessProbe().setInitialDelaySeconds(newDelay);
+        assertThat(KafkaSetOperator.needsRollingUpdate(createDiff()), is(true));
     }
 
     @Test
-    public void testNeedsRollingUpdateReadinessTimeout() {
-        a.getSpec().getTemplate().getSpec().getContainers().get(0).getReadinessProbe().setTimeoutSeconds(
-                a.getSpec().getTemplate().getSpec().getContainers().get(0).getReadinessProbe().getTimeoutSeconds() + 1);
-        assertThat(KafkaSetOperator.needsRollingUpdate(diff()), is(true));
+    public void testNeedsRollingUpdateWhenReadinessTimeoutChanges() {
+        Integer newTimeout = currectSts.getSpec().getTemplate().getSpec().getContainers().get(0).getReadinessProbe().getTimeoutSeconds() + 1;
+        currectSts.getSpec().getTemplate().getSpec().getContainers().get(0).getReadinessProbe().setTimeoutSeconds(newTimeout);
+        assertThat(KafkaSetOperator.needsRollingUpdate(createDiff()), is(true));
     }
 
     @Test
-    public void testNeedsRollingUpdateEnvZkConnect() {
-        String envVar = ENV_VAR_KAFKA_ZOOKEEPER_CONNECT;
-        a.getSpec().getTemplate().getSpec().getContainers().get(1).getEnv().add(new EnvVar(envVar,
-                containerEnvVars(a.getSpec().getTemplate().getSpec().getContainers().get(1)).get(envVar) + "-foo", null));
-        assertThat(KafkaSetOperator.needsRollingUpdate(diff()), is(true));
-    }
-
-    @Test
-    public void testNeedsRollingUpdateEnvSomeOtherThing() {
+    public void testNeedsRollingUpdateWhenNewEnvRemoved() {
         String envVar = "SOME_RANDOM_ENV";
-        a.getSpec().getTemplate().getSpec().getContainers().get(0).getEnv().add(new EnvVar(envVar,
+        currectSts.getSpec().getTemplate().getSpec().getContainers().get(0).getEnv().add(new EnvVar(envVar,
                 "foo", null));
-        assertThat(KafkaSetOperator.needsRollingUpdate(diff()), is(true));
+        assertThat(KafkaSetOperator.needsRollingUpdate(createDiff()), is(true));
     }
 }

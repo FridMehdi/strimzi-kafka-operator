@@ -12,8 +12,6 @@ import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.containsStringIgnoringCase;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.CoreMatchers.allOf;
-import static org.hamcrest.CoreMatchers.anyOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
@@ -29,6 +27,11 @@ public class KafkaConnectCrdIT extends AbstractCrdIT {
     void testKafkaConnectV1alpha1() {
         assumeKube1_11Plus();
         createDelete(KafkaConnect.class, "KafkaConnectV1alpha1.yaml");
+    }
+
+    @Test
+    void testKafkaConnectScaling() {
+        createScaleDelete(KafkaConnect.class, "KafkaConnect.yaml");
     }
 
     @Test
@@ -50,23 +53,16 @@ public class KafkaConnectCrdIT extends AbstractCrdIT {
     void testKafkaConnectWithMissingRequired() {
         Throwable exception = assertThrows(
             KubeClusterException.InvalidResource.class,
-            () -> {
-                createDelete(KafkaConnect.class, "KafkaConnect-with-missing-required-property.yaml");
-            });
+            () -> createDelete(KafkaConnect.class, "KafkaConnect-with-missing-required-property.yaml"));
 
-
-        assertThat(exception.getMessage(), anyOf(
-                containsStringIgnoringCase("spec.bootstrapServers in body is required"),
-                containsStringIgnoringCase("spec.bootstrapServers: Required value")));
+        assertMissingRequiredPropertiesMessage(exception.getMessage(), "spec.bootstrapServers");
     }
 
     @Test
     void testKafkaConnectWithInvalidReplicas() {
         Throwable exception = assertThrows(
             KubeClusterException.InvalidResource.class,
-            () -> {
-                createDelete(KafkaConnect.class, "KafkaConnect-with-invalid-replicas.yaml");
-            });
+            () -> createDelete(KafkaConnect.class, "KafkaConnect-with-invalid-replicas.yaml"));
 
         assertThat(exception.getMessage(),
                 containsStringIgnoringCase("spec.replicas in body must be of type integer: \"string\""));
@@ -86,17 +82,9 @@ public class KafkaConnectCrdIT extends AbstractCrdIT {
     void testKafkaConnectWithTlsAuthWithMissingRequired() {
         Throwable exception = assertThrows(
             KubeClusterException.InvalidResource.class,
-            () -> {
-                createDelete(KafkaConnect.class, "KafkaConnect-with-tls-auth-with-missing-required.yaml");
-            });
+            () -> createDelete(KafkaConnect.class, "KafkaConnect-with-tls-auth-with-missing-required.yaml"));
 
-        assertThat(exception.getMessage(), anyOf(
-                allOf(
-                        containsStringIgnoringCase("spec.authentication.certificateAndKey.certificate in body is required"),
-                        containsStringIgnoringCase("spec.authentication.certificateAndKey.key in body is required")),
-                allOf(
-                        containsStringIgnoringCase("spec.authentication.certificateAndKey.certificate: Required value"),
-                        containsStringIgnoringCase("spec.authentication.certificateAndKey.key: Required value"))));
+        assertMissingRequiredPropertiesMessage(exception.getMessage(), "spec.authentication.certificateAndKey.certificate", "spec.authentication.certificateAndKey.key");
     }
 
     @Test
@@ -118,19 +106,16 @@ public class KafkaConnectCrdIT extends AbstractCrdIT {
     public void testKafkaConnectWithInvalidExternalConfiguration() {
         Throwable exception = assertThrows(
             KubeClusterException.InvalidResource.class,
-            () -> {
-                createDelete(KafkaConnect.class, "KafkaConnect-with-invalid-external-configuration.yaml");
-            });
+            () -> createDelete(KafkaConnect.class, "KafkaConnect-with-invalid-external-configuration.yaml"));
 
-        assertThat(exception.getMessage(), anyOf(
-                containsStringIgnoringCase("spec.externalConfiguration.env.valueFrom in body is required"),
-                containsStringIgnoringCase("spec.externalConfiguration.env.valueFrom: Required value")));
+        assertMissingRequiredPropertiesMessage(exception.getMessage(), "spec.externalConfiguration.env.valueFrom");
     }
 
     @BeforeAll
     void setupEnvironment() {
         cluster.createNamespace(NAMESPACE);
         cluster.createCustomResources(TestUtils.CRD_KAFKA_CONNECT);
+        waitForCrd("crd", "kafkaconnects.kafka.strimzi.io");
     }
 
     @AfterAll

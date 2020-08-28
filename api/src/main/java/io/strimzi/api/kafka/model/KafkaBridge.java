@@ -37,7 +37,8 @@ import static java.util.Collections.unmodifiableList;
                 names = @Crd.Spec.Names(
                         kind = KafkaBridge.RESOURCE_KIND,
                         plural = KafkaBridge.RESOURCE_PLURAL,
-                        shortNames = {KafkaBridge.SHORT_NAME}
+                        shortNames = {KafkaBridge.SHORT_NAME},
+                        categories = {Constants.STRIMZI_CATEGORY}
                 ),
                 group = KafkaBridge.RESOURCE_GROUP,
                 scope = KafkaBridge.SCOPE,
@@ -50,7 +51,12 @@ import static java.util.Collections.unmodifiableList;
                         )
                 },
                 subresources = @Crd.Spec.Subresources(
-                        status = @Crd.Spec.Subresources.Status()
+                        status = @Crd.Spec.Subresources.Status(),
+                        scale = @Crd.Spec.Subresources.Scale(
+                                specReplicasPath = KafkaBridge.SPEC_REPLICAS_PATH,
+                                statusReplicasPath = KafkaBridge.STATUS_REPLICAS_PATH,
+                                labelSelectorPath = KafkaBridge.LABEL_SELECTOR_PATH
+                        )
                 ),
                 additionalPrinterColumns = {
                         @Crd.Spec.AdditionalPrinterColumn(
@@ -71,8 +77,7 @@ import static java.util.Collections.unmodifiableList;
 )
 @Buildable(
         editableEnabled = false,
-        generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder",
+        builderPackage = Constants.FABRIC8_KUBERNETES_API,
         inline = @Inline(type = Doneable.class, prefix = "Doneable", value = "done"),
         refs = {@BuildableReference(ObjectMeta.class)}
 )
@@ -84,17 +89,20 @@ public class KafkaBridge extends CustomResource implements UnknownPropertyPreser
     private static final long serialVersionUID = 1L;
 
     public static final String SCOPE = "Namespaced";
-    public static final String V1ALPHA1 = "v1alpha1";
+    public static final String V1ALPHA1 = Constants.V1ALPHA1;
     public static final List<String> VERSIONS = unmodifiableList(asList(V1ALPHA1));
     public static final String RESOURCE_KIND = "KafkaBridge";
     public static final String RESOURCE_LIST_KIND = RESOURCE_KIND + "List";
-    public static final String RESOURCE_GROUP = "kafka.strimzi.io";
+    public static final String RESOURCE_GROUP = Constants.RESOURCE_GROUP_NAME;
     public static final String RESOURCE_PLURAL = "kafkabridges";
     public static final String RESOURCE_SINGULAR = "kafkabridge";
-    public static final String CRD_API_VERSION = "apiextensions.k8s.io/v1beta1";
+    public static final String CRD_API_VERSION = Constants.V1BETA1_API_VERSION;
     public static final String CRD_NAME = RESOURCE_PLURAL + "." + RESOURCE_GROUP;
     public static final String SHORT_NAME = "kb";
     public static final List<String> RESOURCE_SHORTNAMES = singletonList(SHORT_NAME);
+    public static final String SPEC_REPLICAS_PATH = ".spec.replicas";
+    public static final String STATUS_REPLICAS_PATH = ".status.replicas";
+    public static final String LABEL_SELECTOR_PATH = ".status.labelSelector";
 
     private String apiVersion;
     private ObjectMeta metadata;
@@ -149,7 +157,7 @@ public class KafkaBridge extends CustomResource implements UnknownPropertyPreser
     @Override
     public void setAdditionalProperty(String name, Object value) {
         if (this.additionalProperties == null) {
-            this.additionalProperties = new HashMap<>();
+            this.additionalProperties = new HashMap<>(1);
         }
         this.additionalProperties.put(name, value);
     }

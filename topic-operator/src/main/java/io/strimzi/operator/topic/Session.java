@@ -10,12 +10,15 @@ import io.strimzi.api.kafka.Crds;
 import io.strimzi.api.kafka.KafkaTopicList;
 import io.strimzi.api.kafka.model.DoneableKafkaTopic;
 import io.strimzi.api.kafka.model.KafkaTopic;
+import io.strimzi.operator.common.Util;
+import io.strimzi.operator.common.MicrometerMetricsProvider;
 import io.strimzi.operator.topic.zk.Zk;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Promise;
 import io.vertx.core.http.HttpServer;
+import io.vertx.micrometer.backends.BackendRegistries;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.common.config.SslConfigs;
@@ -23,14 +26,17 @@ import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.security.Security;
 import java.time.Duration;
 import java.util.Properties;
+import io.micrometer.prometheus.PrometheusMeterRegistry;
 
 public class Session extends AbstractVerticle {
 
     private final static Logger LOGGER = LogManager.getLogger(Session.class);
 
     private static final int HEALTH_SERVER_PORT = 8080;
+
 
     private final Config config;
     private final KubernetesClient kubeClient;
@@ -43,6 +49,7 @@ public class Session extends AbstractVerticle {
     /*test*/ ZkTopicsWatcher topicsWatcher;
     /*test*/ TopicConfigsWatcher topicConfigsWatcher;
     /*test*/ ZkTopicWatcher topicWatcher;
+    /*test*/ PrometheusMeterRegistry metricsRegistry;
     /** The id of the periodic reconciliation timer. This is null during a periodic reconciliation. */
     private volatile Long timerId;
     private volatile boolean stopped = false;
@@ -54,16 +61,17 @@ public class Session extends AbstractVerticle {
         this.config = config;
         StringBuilder sb = new StringBuilder(System.lineSeparator());
         for (Config.Value<?> v: Config.keys()) {
-            sb.append("\t").append(v.key).append(": ").append(config.get(v)).append(System.lineSeparator());
+            sb.append("\t").append(v.key).append(": ").append(Util.maskPassword(v.key, config.get(v).toString())).append(System.lineSeparator());
         }
         LOGGER.info("Using config:{}", sb.toString());
+        this.metricsRegistry = (PrometheusMeterRegistry) BackendRegistries.getDefaultNow();
     }
 
     /**
      * Stop the operator.
      */
     @Override
-    public void stop(Future<Void> stopFuture) throws Exception {
+    public void stop(Promise<Void> stop) throws Exception {
         this.stopped = true;
         Long timerId = this.timerId;
         if (timerId != null) {
@@ -96,8 +104,6 @@ public class Session extends AbstractVerticle {
             };
             longHandler.handle(null);
             promise.future().compose(ignored -> {
-                LOGGER.debug("Stopping kafka {}", kafka);
-                kafka.stop();
 
                 LOGGER.debug("Disconnecting from zookeeper {}", zk);
                 zk.disconnect(zkResult -> {
@@ -121,13 +127,17 @@ public class Session extends AbstractVerticle {
                 });
                 return Future.succeededFuture();
             });
-        }, stopFuture);
+        }, stop);
     }
 
+    @SuppressWarnings("deprecation")
     @Override
-    public void start(Future<Void> startupFuture) {
+    public void start(Promise<Void> start) {
         LOGGER.info("Starting");
         Properties adminClientProps = new Properties();
+
+        String dnsCacheTtl = System.getenv("STRIMZI_DNS_CACHE_TTL") == null ? "30" : System.getenv("STRIMZI_DNS_CACHE_TTL");
+        Security.setProperty("networkaddress.cache.ttl", dnsCacheTtl);
         adminClientProps.setProperty(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, config.get(Config.KAFKA_BOOTSTRAP_SERVERS));
 
         if (Boolean.valueOf(config.get(Config.TLS_ENABLED))) {
@@ -136,7 +146,7 @@ public class Session extends AbstractVerticle {
             adminClientProps.setProperty(SslConfigs.SSL_TRUSTSTORE_PASSWORD_CONFIG, config.get(Config.TLS_TRUSTSTORE_PASSWORD));
             adminClientProps.setProperty(SslConfigs.SSL_KEYSTORE_LOCATION_CONFIG, config.get(Config.TLS_KEYSTORE_LOCATION));
             adminClientProps.setProperty(SslConfigs.SSL_KEYSTORE_PASSWORD_CONFIG, config.get(Config.TLS_KEYSTORE_PASSWORD));
-            adminClientProps.setProperty(SslConfigs.SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_CONFIG, "HTTPS");
+            adminClientProps.setProperty(SslConfigs.SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_CONFIG, config.get(Config.TLS_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM));
         }
 
         this.adminClient = AdminClient.create(adminClientProps);
@@ -155,16 +165,18 @@ public class Session extends AbstractVerticle {
                 this.config.get(Config.ZOOKEEPER_CONNECTION_TIMEOUT_MS).intValue(),
             zkResult -> {
                 if (zkResult.failed()) {
-                    ((Promise<Void>) startupFuture).fail(zkResult.cause());
+                    start.fail(zkResult.cause());
                     return;
                 }
                 this.zk = zkResult.result();
                 LOGGER.debug("Using ZooKeeper {}", zk);
 
-                ZkTopicStore topicStore = new ZkTopicStore(zk);
+                String topicsPath = config.get(Config.TOPICS_PATH);
+                ZkTopicStore topicStore = new ZkTopicStore(zk, topicsPath);
+
                 LOGGER.debug("Using TopicStore {}", topicStore);
 
-                this.topicOperator = new TopicOperator(vertx, kafka, k8s, topicStore, labels, namespace, config);
+                this.topicOperator = new TopicOperator(vertx, kafka, k8s, topicStore, labels, namespace, config, new MicrometerMetricsProvider());
                 LOGGER.debug("Using Operator {}", topicOperator);
 
                 this.topicConfigsWatcher = new TopicConfigsWatcher(topicOperator);
@@ -182,7 +194,7 @@ public class Session extends AbstractVerticle {
                     try {
                         LOGGER.debug("Watching KafkaTopics matching {}", labels.labels());
 
-                        Session.this.topicWatch = kubeClient.customResources(Crds.topic(), KafkaTopic.class, KafkaTopicList.class, DoneableKafkaTopic.class)
+                        Session.this.topicWatch = kubeClient.customResources(Crds.kafkaTopic(), KafkaTopic.class, KafkaTopicList.class, DoneableKafkaTopic.class)
                                 .inNamespace(namespace).withLabels(labels.labels()).watch(watcher);
                         LOGGER.debug("Watching setup");
 
@@ -204,7 +216,8 @@ public class Session extends AbstractVerticle {
                         if (!stopped) {
                             timerId = null;
                             boolean isInitialReconcile = oldTimerId == null;
-                            topicOperator.reconcileAllTopics(isInitialReconcile ? "initial " : "periodic ").setHandler(result -> {
+                            topicOperator.reconcileAllTopics(isInitialReconcile ? "initial " : "periodic ").onComplete(result -> {
+                                topicOperator.getPeriodicReconciliationsCounter().increment();
                                 if (isInitialReconcile) {
                                     initReconcilePromise.complete();
                                 }
@@ -216,7 +229,7 @@ public class Session extends AbstractVerticle {
                     }
                 };
                 periodic.handle(null);
-                promise.future().setHandler(startupFuture);
+                promise.future().onComplete(start);
                 LOGGER.info("Started");
             });
     }
@@ -233,6 +246,8 @@ public class Session extends AbstractVerticle {
                         request.response().setStatusCode(200).end();
                     } else if (request.path().equals("/ready")) {
                         request.response().setStatusCode(200).end();
+                    } else if (request.path().equals("/metrics")) {
+                        request.response().setStatusCode(200).end(metricsRegistry.scrape());
                     }
                 })
                 .listen(HEALTH_SERVER_PORT);

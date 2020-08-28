@@ -36,7 +36,8 @@ import static java.util.Collections.unmodifiableList;
                 names = @Crd.Spec.Names(
                         kind = KafkaUser.RESOURCE_KIND,
                         plural = KafkaUser.RESOURCE_PLURAL,
-                        shortNames = {KafkaUser.SHORT_NAME}
+                        shortNames = {KafkaUser.SHORT_NAME},
+                        categories = {Constants.STRIMZI_CATEGORY}
                 ),
                 group = KafkaUser.RESOURCE_GROUP,
                 scope = KafkaUser.SCOPE,
@@ -58,6 +59,12 @@ import static java.util.Collections.unmodifiableList;
                 ),
                 additionalPrinterColumns = {
                         @Crd.Spec.AdditionalPrinterColumn(
+                                name = "Cluster",
+                                description = "The name of the Kafka cluster this user belongs to",
+                                jsonPath = ".metadata.labels.strimzi\\.io/cluster",
+                                type = "string"
+                        ),
+                        @Crd.Spec.AdditionalPrinterColumn(
                                 name = "Authentication",
                                 description = "How the user is authenticated",
                                 jsonPath = ".spec.authentication.type",
@@ -70,13 +77,11 @@ import static java.util.Collections.unmodifiableList;
                                 type = "string"
                         )
                 }
-
         )
 )
 @Buildable(
         editableEnabled = false,
-        generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder",
+        builderPackage = Constants.FABRIC8_KUBERNETES_API,
         inline = @Inline(type = Doneable.class, prefix = "Doneable", value = "done")
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -87,15 +92,15 @@ public class KafkaUser extends CustomResource implements UnknownPropertyPreservi
     private static final long serialVersionUID = 1L;
 
     public static final String SCOPE = "Namespaced";
-    public static final String V1ALPHA1 = "v1alpha1";
-    public static final String V1BETA1 = "v1beta1";
+    public static final String V1ALPHA1 = Constants.V1ALPHA1;
+    public static final String V1BETA1 = Constants.V1BETA1;
     public static final List<String> VERSIONS = unmodifiableList(asList(V1BETA1, V1ALPHA1));
     public static final String RESOURCE_KIND = "KafkaUser";
     public static final String RESOURCE_LIST_KIND = RESOURCE_KIND + "List";
-    public static final String RESOURCE_GROUP = "kafka.strimzi.io";
+    public static final String RESOURCE_GROUP = Constants.RESOURCE_GROUP_NAME;
     public static final String RESOURCE_PLURAL = "kafkausers";
     public static final String RESOURCE_SINGULAR = "kafkauser";
-    public static final String CRD_API_VERSION = "apiextensions.k8s.io/v1beta1";
+    public static final String CRD_API_VERSION = Constants.V1BETA1_API_VERSION;
     public static final String CRD_NAME = RESOURCE_PLURAL + "." + RESOURCE_GROUP;
     public static final String SHORT_NAME = "ku";
     public static final List<String> RESOURCE_SHORTNAMES = singletonList(SHORT_NAME);
@@ -153,7 +158,7 @@ public class KafkaUser extends CustomResource implements UnknownPropertyPreservi
     @Override
     public void setAdditionalProperty(String name, Object value) {
         if (this.additionalProperties == null) {
-            this.additionalProperties = new HashMap<>();
+            this.additionalProperties = new HashMap<>(1);
         }
         this.additionalProperties.put(name, value);
     }

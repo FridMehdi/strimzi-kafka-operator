@@ -33,7 +33,8 @@ import static java.util.Collections.unmodifiableList;
                 names = @Crd.Spec.Names(
                         kind = KafkaConnector.RESOURCE_KIND,
                         plural = KafkaConnector.RESOURCE_PLURAL,
-                        shortNames = {KafkaConnector.SHORT_NAME}
+                        shortNames = {KafkaConnector.SHORT_NAME},
+                        categories = {Constants.STRIMZI_CATEGORY}
                 ),
                 group = KafkaConnector.RESOURCE_GROUP,
                 scope = KafkaConnector.SCOPE,
@@ -45,14 +46,37 @@ import static java.util.Collections.unmodifiableList;
                                 storage = true)
                 },
                 subresources = @Crd.Spec.Subresources(
-                        status = @Crd.Spec.Subresources.Status()
-                )
+                        status = @Crd.Spec.Subresources.Status(),
+                        scale = @Crd.Spec.Subresources.Scale(
+                                specReplicasPath = KafkaConnector.SPEC_REPLICAS_PATH,
+                                statusReplicasPath = KafkaConnector.STATUS_REPLICAS_PATH
+                        )
+                ),
+                additionalPrinterColumns = {
+                        @Crd.Spec.AdditionalPrinterColumn(
+                                name = "Cluster",
+                                description = "The name of the Kafka Connect cluster this connector belongs to",
+                                jsonPath = ".metadata.labels.strimzi\\.io/cluster",
+                                type = "string"
+                        ),
+                        @Crd.Spec.AdditionalPrinterColumn(
+                                name = "Connector class",
+                                description = "The class used by this connector",
+                                jsonPath = ".spec.class",
+                                type = "string"
+                        ),
+                        @Crd.Spec.AdditionalPrinterColumn(
+                                name = "Max Tasks",
+                                description = "Maximum number of tasks",
+                                jsonPath = ".spec.tasksMax",
+                                type = "integer"
+                        )
+                }
         )
 )
 @Buildable(
         editableEnabled = false,
-        generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder",
+        builderPackage = Constants.FABRIC8_KUBERNETES_API,
         inline = @Inline(type = Doneable.class, prefix = "Doneable", value = "done")
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -61,16 +85,18 @@ import static java.util.Collections.unmodifiableList;
 @ToString
 public class KafkaConnector extends CustomResource implements UnknownPropertyPreserving, HasStatus<KafkaConnectorStatus> {
     private static final long serialVersionUID = 1L;
-    public static final String V1ALPHA1 = "v1alpha1";
+    public static final String V1ALPHA1 = Constants.V1ALPHA1;
     public static final List<String> VERSIONS = unmodifiableList(asList(V1ALPHA1));
     public static final String SCOPE = "Namespaced";
-    public static final String CRD_API_VERSION = "apiextensions.k8s.io/v1beta1";
+    public static final String CRD_API_VERSION = Constants.V1BETA1_API_VERSION;
     public static final String RESOURCE_PLURAL = "kafkaconnectors";
     public static final String RESOURCE_SINGULAR = "kafkaconnector";
-    public static final String RESOURCE_GROUP = "kafka.strimzi.io";
+    public static final String RESOURCE_GROUP = Constants.RESOURCE_GROUP_NAME;
     public static final String RESOURCE_KIND = "KafkaConnector";
     public static final String RESOURCE_LIST_KIND = RESOURCE_KIND + "List";
     public static final String SHORT_NAME = "kctr";
+    public static final String SPEC_REPLICAS_PATH = ".spec.tasksMax";
+    public static final String STATUS_REPLICAS_PATH = ".status.tasksMax";
 
     private KafkaConnectorSpec spec;
     private KafkaConnectorStatus status;
@@ -132,7 +158,7 @@ public class KafkaConnector extends CustomResource implements UnknownPropertyPre
     @Override
     public void setAdditionalProperty(String name, Object value) {
         if (this.additionalProperties == null) {
-            this.additionalProperties = new HashMap<>();
+            this.additionalProperties = new HashMap<>(1);
         }
         this.additionalProperties.put(name, value);
     }

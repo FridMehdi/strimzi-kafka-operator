@@ -11,7 +11,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledIfEnvironmentVariable;
 
-import static org.hamcrest.CoreMatchers.allOf;
 import static org.hamcrest.CoreMatchers.anyOf;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsStringIgnoringCase;
@@ -34,6 +33,11 @@ public class KafkaCrdIT extends AbstractCrdIT {
     }
 
     @Test
+    void testKafkaIsNotScaling() {
+        assertThrows(KubeClusterException.class, () -> createScaleDelete(Kafka.class, "Kafka.yaml"));
+    }
+
+    @Test
     void testKafkaV1Beta1() {
         createDelete(Kafka.class, "KafkaV1beta1.yaml");
     }
@@ -52,17 +56,9 @@ public class KafkaCrdIT extends AbstractCrdIT {
     void testKafkaWithMissingRequired() {
         Throwable exception = assertThrows(
             KubeClusterException.InvalidResource.class,
-            () -> {
-                createDelete(Kafka.class, "Kafka-with-missing-required-property.yaml");
-            });
+            () -> createDelete(Kafka.class, "Kafka-with-missing-required-property.yaml"));
 
-        assertThat(exception.getMessage(), anyOf(
-                allOf(
-                        containsStringIgnoringCase("spec.zookeeper in body is required"),
-                        containsStringIgnoringCase("spec.kafka in body is required")),
-                allOf(
-                        containsStringIgnoringCase("spec.kafka: Required value"),
-                        containsStringIgnoringCase("spec.zookeeper: Required value"))));
+        assertMissingRequiredPropertiesMessage(exception.getMessage(), "spec.zookeeper", "spec.kafka");
     }
 
     @Test
@@ -154,10 +150,36 @@ public class KafkaCrdIT extends AbstractCrdIT {
                 containsStringIgnoringCase("spec.kafka.jmxOptions.authentication.type: Unsupported value: \"not-right\": supported values: \"password\"")));
     }
 
+    @Test
+    void testJmxOptionsWithoutRequiredOutputDefinitionKeys() {
+        Throwable exception = assertThrows(
+            KubeClusterException.InvalidResource.class,
+            () -> {
+                createDelete(Kafka.class, "JmxTrans-output-definition-with-missing-required-property.yaml");
+            });
+
+        assertMissingRequiredPropertiesMessage(exception.getMessage(), "spec.jmxTrans.outputDefinitions.outputType", "spec.jmxTrans.outputDefinitions.name");
+    }
+
+    @Test
+    void testJmxOptionsWithoutRequiredQueryKeys() {
+        Throwable exception = assertThrows(
+            KubeClusterException.InvalidResource.class,
+            () -> {
+                createDelete(Kafka.class, "JmxTrans-queries-with-missing-required-property.yaml");
+            });
+
+        assertMissingRequiredPropertiesMessage(exception.getMessage(),
+                "spec.jmxTrans.kafkaQueries.targetMBean",
+                "spec.jmxTrans.kafkaQueries.attributes",
+                "spec.jmxTrans.kafkaQueries.outputs");
+    }
+
     @BeforeAll
     void setupEnvironment() {
         cluster.createNamespace(NAMESPACE);
         cluster.createCustomResources(TestUtils.CRD_KAFKA);
+        waitForCrd("crd", "kafkas.kafka.strimzi.io");
     }
 
     @AfterAll

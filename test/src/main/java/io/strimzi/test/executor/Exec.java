@@ -40,6 +40,7 @@ public class Exec {
     private static final Pattern ERROR_PATTERN = Pattern.compile("Error from server \\(([a-zA-Z0-9]+)\\):");
     private static final Pattern INVALID_PATTERN = Pattern.compile("The ([a-zA-Z0-9]+) \"([a-z0-9.-]+)\" is invalid:");
     private static final Pattern PATH_SPLITTER = Pattern.compile(System.getProperty("path.separator"));
+    private static final int MAXIMUM_EXEC_LOG_CHARACTER_SIZE = Integer.parseInt(System.getenv().getOrDefault("STRIMZI_EXEC_MAX_LOG_OUTPUT_CHARACTERS", "20000"));
     private static final Object LOCK = new Object();
 
     public Process process;
@@ -163,9 +164,18 @@ public class Exec {
             ret = executor.execute(input, command, timeout);
             synchronized (LOCK) {
                 if (logToOutput) {
-                    LOGGER.info("Return code: {}", ret);
-                    LOGGER.info("stdout: \n{}", executor.out());
-                    LOGGER.info("stderr: \n{}", executor.err());
+                    LOGGER.info("Command: {}", String.join(" ", command));
+                    LOGGER.info("RETURN code: {}", ret);
+                    if (!executor.out().isEmpty()) {
+                        LOGGER.info("======STDOUT START=======");
+                        LOGGER.info("{}", cutExecutorLog(executor.out()));
+                        LOGGER.info("======STDOUT END======");
+                    }
+                    if (!executor.err().isEmpty()) {
+                        LOGGER.info("======STDERR START=======");
+                        LOGGER.info("{}", cutExecutorLog(executor.err()));
+                        LOGGER.info("======STDERR END======");
+                    }
                 }
             }
 
@@ -212,13 +222,13 @@ public class Exec {
      * Method executes external command
      *
      * @param commands arguments for command
-     * @param timeout  timeout in ms for kill
+     * @param timeoutMs  timeout in ms for kill
      * @return returns ecode of execution
      * @throws IOException
      * @throws InterruptedException
      * @throws ExecutionException
      */
-    public int execute(String input, List<String> commands, int timeout) throws IOException, InterruptedException, ExecutionException {
+    public int execute(String input, List<String> commands, long timeoutMs) throws IOException, InterruptedException, ExecutionException {
         LOGGER.trace("Running command - " + join(" ", commands.toArray(new String[0])));
         ProcessBuilder builder = new ProcessBuilder();
         builder.command(commands);
@@ -236,8 +246,8 @@ public class Exec {
         Future<String> error = readStdError();
 
         int retCode = 1;
-        if (timeout > 0) {
-            if (process.waitFor(timeout, TimeUnit.MILLISECONDS)) {
+        if (timeoutMs > 0) {
+            if (process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
                 retCode = process.exitValue();
             } else {
                 process.destroyForcibly();
@@ -320,6 +330,19 @@ public class Exec {
             }
         }
         return false;
+    }
+
+    /**
+     * This method check the size of executor output log and cut it if it's too long.
+     * @param log executor log
+     * @return updated log if size is too big
+     */
+    public static String cutExecutorLog(String log) {
+        if (log.length() > MAXIMUM_EXEC_LOG_CHARACTER_SIZE) {
+            LOGGER.warn("Executor log is too long. Going to strip it and print only first {} characters", MAXIMUM_EXEC_LOG_CHARACTER_SIZE);
+            return log.substring(0, MAXIMUM_EXEC_LOG_CHARACTER_SIZE);
+        }
+        return log;
     }
 
     /**

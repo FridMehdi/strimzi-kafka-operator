@@ -16,6 +16,7 @@ import io.strimzi.api.kafka.model.status.KafkaUserStatus;
 import io.strimzi.certs.CertManager;
 import io.strimzi.operator.cluster.model.StatusDiff;
 import io.strimzi.operator.common.AbstractOperator;
+import io.strimzi.operator.common.MicrometerMetricsProvider;
 import io.strimzi.operator.common.PasswordGenerator;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.Labels;
@@ -82,7 +83,7 @@ public class KafkaUserOperator extends AbstractOperator<KafkaUser,
                              ScramShaCredentialsOperator scramShaCredentialOperator,
                              KafkaUserQuotasOperator kafkaUserQuotasOperator,
                              SimpleAclOperator aclOperations, String caCertName, String caKeyName, String caNamespace) {
-        super(vertx, "User", crdOperator);
+        super(vertx, "KafkaUser", crdOperator, new MicrometerMetricsProvider());
         this.certManager = certManager;
         Map<String, String> matchLabels = labels.toMap();
         this.selector = matchLabels.isEmpty() ? Optional.empty() : Optional.of(new LabelSelector(null, matchLabels));
@@ -157,7 +158,7 @@ public class KafkaUserOperator extends AbstractOperator<KafkaUser,
         } catch (Exception e) {
             StatusUtils.setStatusConditionAndObservedGeneration(resource, userStatus, Future.failedFuture(e));
             updateStatus(resource, reconciliation, userStatus)
-                    .setHandler(result -> handler.handle(Future.failedFuture(e)));
+                    .onComplete(result -> handler.handle(Future.failedFuture(e)));
             return handler.future();
         }
 
@@ -171,32 +172,35 @@ public class KafkaUserOperator extends AbstractOperator<KafkaUser,
 
         Set<SimpleAclRule> tlsAcls = null;
         Set<SimpleAclRule> scramOrNoneAcls = null;
-        KafkaUserQuotas newQuotasTls = null;
-        KafkaUserQuotas newQuotasPlain = null;
+        KafkaUserQuotas tlsQuotas = null;
+        KafkaUserQuotas scramOrNoneQuotas = null;
 
         if (user.isTlsUser())   {
             tlsAcls = user.getSimpleAclRules();
-            newQuotasTls = user.getQuotas();
-            newQuotasPlain = null;
+            tlsQuotas = user.getQuotas();
         } else if (user.isScramUser() || user.isNoneUser())  {
             scramOrNoneAcls = user.getSimpleAclRules();
-            newQuotasTls = null;
-            newQuotasPlain = user.getQuotas();
+            scramOrNoneQuotas = user.getQuotas();
         }
 
+        // Create the effectively final variables to use in lambda
+        KafkaUserQuotas finalScramOrNoneQuotas = scramOrNoneQuotas;
+        KafkaUserQuotas finalTlsQuotas = tlsQuotas;
 
+        // Reconciliation of Quotas and of SCRAM-SHA credentials changes the same fields and cannot be done in parallel
+        // because they would overwrite each other's data!
         CompositeFuture.join(
-                scramShaCredentialOperator.reconcile(user.getName(), password),
-                kafkaUserQuotasOperator.reconcile(KafkaUserModel.getTlsUserName(userName), newQuotasTls),
-                kafkaUserQuotasOperator.reconcile(user.getName(), newQuotasPlain),
+                scramShaCredentialOperator.reconcile(user.getName(), password)
+                        .compose(ignore -> CompositeFuture.join(kafkaUserQuotasOperator.reconcile(KafkaUserModel.getTlsUserName(userName), finalTlsQuotas),
+                                kafkaUserQuotasOperator.reconcile(KafkaUserModel.getScramUserName(userName), finalScramOrNoneQuotas))),
                 reconcileSecretAndSetStatus(namespace, user, desired, userStatus),
                 aclOperations.reconcile(KafkaUserModel.getTlsUserName(userName), tlsAcls),
                 aclOperations.reconcile(KafkaUserModel.getScramUserName(userName), scramOrNoneAcls))
-                .setHandler(reconciliationResult -> {
+                .onComplete(reconciliationResult -> {
                     StatusUtils.setStatusConditionAndObservedGeneration(resource, userStatus, reconciliationResult.mapEmpty());
                     userStatus.setUsername(user.getUserName());
 
-                    updateStatus(resource, reconciliation, userStatus).setHandler(statusResult -> {
+                    updateStatus(resource, reconciliation, userStatus).onComplete(statusResult -> {
                         // If both features succeeded, createOrUpdate succeeded as well
                         // If one or both of them failed, we prefer the reconciliation failure as the main error
                         if (reconciliationResult.succeeded() && statusResult.succeeded()) {
@@ -234,7 +238,7 @@ public class KafkaUserOperator extends AbstractOperator<KafkaUser,
     Future<Void> updateStatus(KafkaUser kafkaUserAssembly, Reconciliation reconciliation, KafkaUserStatus desiredStatus) {
         Promise<Void> updateStatusPromise = Promise.promise();
 
-        resourceOperator.getAsync(kafkaUserAssembly.getMetadata().getNamespace(), kafkaUserAssembly.getMetadata().getName()).setHandler(getRes -> {
+        resourceOperator.getAsync(kafkaUserAssembly.getMetadata().getNamespace(), kafkaUserAssembly.getMetadata().getName()).onComplete(getRes -> {
             if (getRes.succeeded()) {
                 KafkaUser user = getRes.result();
 
@@ -250,7 +254,7 @@ public class KafkaUserOperator extends AbstractOperator<KafkaUser,
                         if (!ksDiff.isEmpty()) {
                             KafkaUser resourceWithNewStatus = new KafkaUserBuilder(user).withStatus(desiredStatus).build();
 
-                            resourceOperator.updateStatusAsync(resourceWithNewStatus).setHandler(updateRes -> {
+                            resourceOperator.updateStatusAsync(resourceWithNewStatus).onComplete(updateRes -> {
                                 if (updateRes.succeeded()) {
                                     log.debug("{}: Completed status update", reconciliation);
                                     updateStatusPromise.complete();
@@ -290,9 +294,9 @@ public class KafkaUserOperator extends AbstractOperator<KafkaUser,
         return CompositeFuture.join(secretOperations.reconcile(namespace, KafkaUserModel.getSecretName(user), null),
                 aclOperations.reconcile(KafkaUserModel.getTlsUserName(user), null),
                 aclOperations.reconcile(KafkaUserModel.getScramUserName(user), null),
-                kafkaUserQuotasOperator.reconcile(KafkaUserModel.getTlsUserName(user), null),
-                kafkaUserQuotasOperator.reconcile(KafkaUserModel.getScramUserName(user), null),
-                scramShaCredentialOperator.reconcile(KafkaUserModel.getScramUserName(user), null))
+                scramShaCredentialOperator.reconcile(KafkaUserModel.getScramUserName(user), null)
+                        .compose(ignore -> kafkaUserQuotasOperator.reconcile(KafkaUserModel.getTlsUserName(user), null))
+                        .compose(ignore -> kafkaUserQuotasOperator.reconcile(KafkaUserModel.getScramUserName(user), null)))
             .map(Boolean.TRUE);
     }
 

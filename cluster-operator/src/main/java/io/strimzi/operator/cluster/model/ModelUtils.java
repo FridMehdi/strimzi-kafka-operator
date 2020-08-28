@@ -9,19 +9,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.EnvVar;
 import io.fabric8.kubernetes.api.model.OwnerReference;
-import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
+import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Probe;
 import io.fabric8.kubernetes.api.model.ProbeBuilder;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
-import io.fabric8.kubernetes.api.model.Volume;
-import io.fabric8.kubernetes.api.model.VolumeMount;
+import io.fabric8.kubernetes.api.model.Toleration;
 import io.fabric8.kubernetes.api.model.apps.StatefulSet;
 import io.strimzi.api.kafka.model.CertificateAuthority;
-import io.strimzi.api.kafka.model.storage.EphemeralStorage;
+import io.strimzi.api.kafka.model.SystemProperty;
 import io.strimzi.api.kafka.model.storage.JbodStorage;
 import io.strimzi.api.kafka.model.storage.PersistentClaimStorage;
-import io.strimzi.api.kafka.model.storage.SingleVolumeStorage;
 import io.strimzi.api.kafka.model.storage.Storage;
 import io.strimzi.api.kafka.model.TlsSidecar;
 import io.strimzi.api.kafka.model.TlsSidecarLogLevel;
@@ -36,14 +34,22 @@ import org.apache.logging.log4j.Logger;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
+/**
+ * ModelUtils is a utility class that holds generic static helper functions
+ * These are generally to be used within the classes that extend the AbstractModel class
+ */
 public class ModelUtils {
 
     public static final io.strimzi.api.kafka.model.Probe DEFAULT_TLS_SIDECAR_PROBE = new io.strimzi.api.kafka.model.ProbeBuilder()
@@ -57,6 +63,111 @@ public class ModelUtils {
 
     public static final String KUBERNETES_SERVICE_DNS_DOMAIN =
             System.getenv().getOrDefault("KUBERNETES_SERVICE_DNS_DOMAIN", "cluster.local");
+
+    /**
+     * Generates the DNS name of the pod including the cluster suffix
+     * (i.e. usually with the cluster.local - but can be different on different clusters)
+     * Example: my-pod-1.my-service.my-ns.svc.cluster.local
+     *
+     * Note: Conventionally this would only be used for pods with deterministic names such as statefulset pods
+     *
+     * @param namespace     Namespace of the pod
+     * @param serviceName   Name of the cluster
+     * @param podName       Name of the pod
+     *
+     * @return              DNS name of the pod
+     */
+    public static String podDnsName(String namespace, String serviceName, String podName) {
+        return String.format("%s.%s",
+                podName,
+                ModelUtils.serviceDnsName(namespace, serviceName));
+    }
+
+    /**
+     * Generates the DNS name of the pod without the cluster domain suffix
+     * (i.e. usually without the cluster.local - but can be different on different clusters)
+     * Example: my-cluster-pod-1.my-cluster-service.my-ns.svc
+     *
+     * Note: Conventionally this would only be used for pods with deterministic names such as statefulset pods
+     *
+     * @param namespace     Namespace of the pod
+     * @param serviceName   Name of the service
+     * @param podName       Name of the pod
+     *
+     * @return              DNS name of the pod without the cluster domain suffix
+     */
+    public static String podDnsNameWithoutClusterDomain(String namespace, String serviceName, String podName) {
+        return String.format("%s.%s",
+                podName,
+                ModelUtils.serviceDnsNameWithoutClusterDomain(namespace, serviceName));
+
+    }
+
+    /**
+     * Generates the DNS name of the service including the cluster suffix
+     * (i.e. usually with the cluster.local - but can be different on different clusters)
+     * Example: my-service.my-ns.svc.cluster.local
+     *
+     * @param namespace     Namespace of the pod
+     * @param serviceName   Name of the cluster
+     *
+     * @return              DNS name of the service
+     */
+    public static String serviceDnsName(String namespace, String serviceName) {
+        return String.format("%s.%s.svc.%s",
+                serviceName,
+                namespace,
+                ModelUtils.KUBERNETES_SERVICE_DNS_DOMAIN);
+    }
+
+    /**
+     * Generates the wildcard DNS name of the service without the cluster domain suffix
+     * (i.e. usually without the cluster.local - but can be different on different clusters)
+     * Example: *.my-service.my-ns.svc
+     *
+     * @param namespace     Namespace of the pod
+     * @param serviceName   Name of the service
+     *
+     * @return              Wildcard DNS name of the service without the cluster domain suffix
+     */
+    public static String wildcardServiceDnsNameWithoutClusterDomain(String namespace, String serviceName) {
+        return String.format("*.%s.%s.svc",
+                serviceName,
+                namespace);
+    }
+
+    /**
+     * Generates the wildcard DNS name of the service including the cluster suffix
+     * (i.e. usually with the cluster.local - but can be different on different clusters)
+     * Example: *.my-service.my-ns.svc.cluster.local
+     *
+     * @param namespace     Namespace of the pod
+     * @param serviceName   Name of the cluster
+     *
+     * @return              Wildcard DNS name of the service
+     */
+    public static String wildcardServiceDnsName(String namespace, String serviceName) {
+        return String.format("*.%s.%s.svc.%s",
+                serviceName,
+                namespace,
+                ModelUtils.KUBERNETES_SERVICE_DNS_DOMAIN);
+    }
+
+    /**
+     * Generates the DNS name of the service without the cluster domain suffix
+     * (i.e. usually without the cluster.local - but can be different on different clusters)
+     * Example: my-service.my-ns.svc
+     *
+     * @param namespace     Namespace of the pod
+     * @param serviceName   Name of the service
+     *
+     * @return              DNS name of the service without the cluster domain suffix
+     */
+    public static String serviceDnsNameWithoutClusterDomain(String namespace, String serviceName) {
+        return String.format("%s.%s.svc",
+                serviceName,
+                namespace);
+    }
 
     /**
      * @param certificateAuthority The CA configuration.
@@ -84,6 +195,10 @@ public class ModelUtils {
         }
 
         return renewalDays;
+    }
+
+    public static String formatTimestamp(Date date) {
+        return new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ").format(date);
     }
 
     /**
@@ -115,6 +230,30 @@ public class ModelUtils {
             }
         }
         throw new KafkaUpgradeException("Could not find '" + containerName + "' container in StatefulSet " + sts.getMetadata().getName());
+    }
+
+    /**
+     * @param pod The StatefulSet
+     * @param containerName The name of the container whoes environment variables are to be retrieved
+     * @param envVarName Name of the environment variable which we should get
+     * @return The environment of the Kafka container in the sts.
+     */
+    public static String getPodEnv(Pod pod, String containerName, String envVarName) {
+        if (pod != null) {
+            for (Container container : pod.getSpec().getContainers()) {
+                if (containerName.equals(container.getName())) {
+                    if (container.getEnv() != null) {
+                        for (EnvVar envVar : container.getEnv()) {
+                            if (envVarName.equals(envVar.getName()))    {
+                                return envVar.getValue();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     public static List<EnvVar> envAsList(Map<String, String> env) {
@@ -162,7 +301,7 @@ public class ModelUtils {
                 .withCommand(command)
                 .endExec()
                 .build();
-        AbstractModel.log.trace("Created exec probe {}", probe);
+        log.trace("Created exec probe {}", probe);
         return probe;
     }
 
@@ -196,7 +335,7 @@ public class ModelUtils {
 
     public static Secret buildSecret(ClusterCa clusterCa, Secret secret, String namespace, String secretName,
             String commonName, String keyCertName, Labels labels, OwnerReference ownerReference, boolean isMaintenanceTimeWindowsSatisfied) {
-        Map<String, String> data = new HashMap<>();
+        Map<String, String> data = new HashMap<>(4);
         CertAndKey certAndKey = null;
         boolean shouldBeRegenerated = false;
         List<String> reasons = new ArrayList<>(2);
@@ -205,14 +344,14 @@ public class ModelUtils {
             reasons.add("certificate doesn't exist yet");
             shouldBeRegenerated = true;
         } else {
-            if (clusterCa.certRenewed() || (clusterCa.isExpiring(secret, keyCertName + ".crt") && isMaintenanceTimeWindowsSatisfied)) {
+            if (clusterCa.keyCreated() || clusterCa.certRenewed() || (isMaintenanceTimeWindowsSatisfied && clusterCa.isExpiring(secret, keyCertName + ".crt"))) {
                 reasons.add("certificate needs to be renewed");
                 shouldBeRegenerated = true;
             }
         }
 
         if (shouldBeRegenerated) {
-            log.debug("Certificate for pod {} need to be regenerated because:", keyCertName, String.join(", ", reasons));
+            log.debug("Certificate for pod {} need to be regenerated because: {}", keyCertName, String.join(", ", reasons));
 
             try {
                 certAndKey = clusterCa.generateSignedCert(commonName, Ca.IO_STRIMZI);
@@ -307,6 +446,14 @@ public class ModelUtils {
                 model.templatePodAnnotations = pod.getMetadata().getAnnotations();
             }
 
+            if (pod.getAffinity() != null)  {
+                model.setUserAffinity(pod.getAffinity());
+            }
+
+            if (pod.getTolerations() != null)   {
+                model.setTolerations(pod.getTolerations());
+            }
+
             model.templateTerminationGracePeriodSeconds = pod.getTerminationGracePeriodSeconds();
             model.templateImagePullSecrets = pod.getImagePullSecrets();
             model.templateSecurityContext = pod.getSecurityContext();
@@ -330,16 +477,6 @@ public class ModelUtils {
                     .stream().anyMatch(volume -> volume instanceof PersistentClaimStorage);
         }
         return isPersistentClaimStorage;
-    }
-
-    /**
-     * Returns the prefix used for volumes and persistent volume claims
-     *
-     * @param id identification number of the persistent storage
-     * @return The volume prefix.
-     */
-    public static String getVolumePrefix(Integer id) {
-        return id == null ? AbstractModel.VOLUME_NAME : AbstractModel.VOLUME_NAME + "-" + id;
     }
 
     public static Storage decodeStorageFromJson(String json) {
@@ -400,77 +537,74 @@ public class ModelUtils {
         return false;
     }
 
-    public static List<VolumeMount> getDataVolumeMountPaths(Storage storage, String mountPath)   {
-        List<VolumeMount> volumeMounts = new ArrayList<>();
-
-        if (storage != null) {
-            if (storage instanceof JbodStorage) {
-                for (SingleVolumeStorage volume : ((JbodStorage) storage).getVolumes()) {
-                    if (volume.getId() == null)
-                        throw new InvalidResourceException("Volumes under JBOD storage type have to have 'id' property");
-                    // it's called recursively for setting the information from the current volume
-                    volumeMounts.addAll(getDataVolumeMountPaths(volume, mountPath));
-                }
-            } else {
-                Integer id;
-
-                if (storage instanceof EphemeralStorage) {
-                    id = ((EphemeralStorage) storage).getId();
-                } else if (storage instanceof PersistentClaimStorage) {
-                    id = ((PersistentClaimStorage) storage).getId();
-                } else {
-                    throw new IllegalStateException("The declared storage '" + storage.getType() + "' is not supported");
-                }
-
-                String name = getVolumePrefix(id);
-                String namedMountPath = mountPath + "/" + name;
-                volumeMounts.add(AbstractModel.createVolumeMount(name, namedMountPath));
-            }
-        }
-
-        return volumeMounts;
+    public static <T> List<T> asListOrEmptyList(List<T> list) {
+        return Optional.ofNullable(list)
+                .orElse(Collections.emptyList());
     }
 
-    public static List<PersistentVolumeClaim> getDataPersistentVolumeClaims(Storage storage)   {
-        List<PersistentVolumeClaim> pvcs = new ArrayList<>();
-
-        if (storage != null) {
-            if (storage instanceof JbodStorage) {
-                for (SingleVolumeStorage volume : ((JbodStorage) storage).getVolumes()) {
-                    if (volume.getId() == null)
-                        throw new InvalidResourceException("Volumes under JBOD storage type have to have 'id' property");
-                    // it's called recursively for setting the information from the current volume
-                    pvcs.addAll(getDataPersistentVolumeClaims(volume));
-                }
-            } else if (storage instanceof PersistentClaimStorage) {
-                Integer id = ((PersistentClaimStorage) storage).getId();
-                String name = getVolumePrefix(id);
-                pvcs.add(AbstractModel.createPersistentVolumeClaimTemplate(name, (PersistentClaimStorage) storage));
-            }
+    public static String getJavaSystemPropertiesToString(List<SystemProperty> javaSystemProperties) {
+        if (javaSystemProperties == null) {
+            return null;
         }
-
-        return pvcs;
+        List<String> javaSystemPropertiesList = new ArrayList<>(javaSystemProperties.size());
+        for (SystemProperty property: javaSystemProperties) {
+            javaSystemPropertiesList.add("-D" + property.getName() + "=" + property.getValue());
+        }
+        return String.join(" ", javaSystemPropertiesList);
     }
 
-    public static List<Volume> getDataVolumes(Storage storage)   {
-        List<Volume> volumes = new ArrayList<>();
+    /**
+     * This method transforms a String into a List of Strings, where each entry is an uncommented line of input.
+     * The lines beginning with '#' (comments) are ignored.
+     * @param config ConfigMap data as a String
+     * @return List of String key=value
+     */
+    public static List<String> getLinesWithoutCommentsAndEmptyLines(String config) {
+        List<String> validLines = new ArrayList<>();
+        if (config != null) {
+            List<String> allLines = Arrays.asList(config.split("\\r?\\n"));
 
-        if (storage != null) {
-            if (storage instanceof JbodStorage) {
-                for (SingleVolumeStorage volume : ((JbodStorage) storage).getVolumes()) {
-                    if (volume.getId() == null)
-                        throw new InvalidResourceException("Volumes under JBOD storage type have to have 'id' property");
-                    // it's called recursively for setting the information from the current volume
-                    volumes.addAll(getDataVolumes(volume));
+            for (String line : allLines) {
+                if (!line.isEmpty() && !line.matches("\\s*\\#.*")) {
+                    validLines.add(line);
                 }
-            } else if (storage instanceof EphemeralStorage) {
-                Integer id = ((EphemeralStorage) storage).getId();
-                String name = getVolumePrefix(id);
-                String sizeLimit = ((EphemeralStorage) storage).getSizeLimit();
-                volumes.add(AbstractModel.createEmptyDirVolume(name, sizeLimit));
             }
         }
+        return validLines;
+    }
 
-        return volumes;
+    /**
+     * If the toleration.value is an empty string, set it to null. That solves an issue when built STS contains a filed
+     * with an empty property value. K8s is removing properties like this and thus we cannot fetch an equal STS which was
+     * created with (some) empty value.
+     * @param tolerations tolerations list to check whether toleration.value is an empty string and eventually replace it by null
+     */
+    public static void removeEmptyValuesFromTolerations(List<Toleration> tolerations) {
+        if (tolerations != null) {
+            tolerations.stream().filter(toleration -> toleration.getValue() != null && toleration.getValue().isEmpty()).forEach(emptyValTol -> emptyValTol.setValue(null));
+        }
+    }
+
+    /**
+     * Checks whether tolerations and template.tolerations exits. If so, latter takes precedence. Entries like tolerations.value == ""
+     * are replaced by tolerations.value = null
+     * @param tolerations path to tolerations in CR
+     * @param tolerationList tolerations
+     * @param templateTolerations path to template.tolerations in CR
+     * @param podTemplate pod template containing tolerations
+     * @return adjusted list with tolerations
+     */
+    public static List<Toleration> tolerations(String tolerations, List<Toleration> tolerationList, String templateTolerations, PodTemplate podTemplate) {
+        List<Toleration> tolerationsListLocal;
+        if (podTemplate != null && podTemplate.getTolerations() != null) {
+            if (tolerationList != null) {
+                log.warn("Tolerations given on both {} and {}; latter takes precedence", tolerations, templateTolerations);
+            }
+            tolerationsListLocal = podTemplate.getTolerations();
+        } else {
+            tolerationsListLocal = tolerationList;
+        }
+        removeEmptyValuesFromTolerations(tolerationsListLocal);
+        return tolerationsListLocal;
     }
 }

@@ -16,8 +16,11 @@ import io.strimzi.operator.cluster.operator.assembly.KafkaBridgeAssemblyOperator
 import io.strimzi.operator.cluster.operator.assembly.KafkaConnectAssemblyOperator;
 import io.strimzi.operator.cluster.operator.assembly.KafkaConnectS2IAssemblyOperator;
 import io.strimzi.operator.cluster.operator.assembly.KafkaMirrorMakerAssemblyOperator;
+import io.strimzi.operator.cluster.operator.assembly.KafkaMirrorMaker2AssemblyOperator;
+import io.strimzi.operator.cluster.operator.assembly.KafkaRebalanceAssemblyOperator;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.common.PasswordGenerator;
+import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.operator.resource.ClusterRoleOperator;
 import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
@@ -30,6 +33,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.security.Security;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -56,21 +60,26 @@ public class Main {
         log.info("ClusterOperator {} is starting", Main.class.getPackage().getImplementationVersion());
         ClusterOperatorConfig config = ClusterOperatorConfig.fromMap(System.getenv());
 
+        String dnsCacheTtl = System.getenv("STRIMZI_DNS_CACHE_TTL") == null ? "30" : System.getenv("STRIMZI_DNS_CACHE_TTL");
+        Security.setProperty("networkaddress.cache.ttl", dnsCacheTtl);
+
         //Setup Micrometer metrics options
         VertxOptions options = new VertxOptions().setMetricsOptions(
                 new MicrometerMetricsOptions()
                         .setPrometheusOptions(new VertxPrometheusOptions().setEnabled(true))
+                        .setJvmMetricsEnabled(true)
                         .setEnabled(true));
         Vertx vertx = Vertx.vertx(options);
+        
         KubernetesClient client = new DefaultKubernetesClient();
 
-        maybeCreateClusterRoles(vertx, config, client).setHandler(crs -> {
+        maybeCreateClusterRoles(vertx, config, client).onComplete(crs -> {
             if (crs.succeeded())    {
-                PlatformFeaturesAvailability.create(vertx, client).setHandler(pfa -> {
+                PlatformFeaturesAvailability.create(vertx, client).onComplete(pfa -> {
                     if (pfa.succeeded()) {
                         log.info("Environment facts gathered: {}", pfa.result());
 
-                        run(vertx, client, pfa.result(), config).setHandler(ar -> {
+                        run(vertx, client, pfa.result(), config).onComplete(ar -> {
                             if (ar.failed()) {
                                 log.error("Unable to start operator for 1 or more namespace", ar.cause());
                                 System.exit(1);
@@ -89,7 +98,7 @@ public class Main {
     }
 
     static CompositeFuture run(Vertx vertx, KubernetesClient client, PlatformFeaturesAvailability pfa, ClusterOperatorConfig config) {
-        printEnvInfo();
+        Util.printEnvInfo();
 
         ResourceOperatorSupplier resourceOperatorSupplier = new ResourceOperatorSupplier(vertx, client, pfa, config.getOperationTimeoutMs());
 
@@ -112,13 +121,19 @@ public class Main {
             log.info("The KafkaConnectS2I custom resource definition can only be used in environment which supports OpenShift build, image and apps APIs. These APIs do not seem to be supported in this environment.");
         }
 
+        KafkaMirrorMaker2AssemblyOperator kafkaMirrorMaker2AssemblyOperator =
+                new KafkaMirrorMaker2AssemblyOperator(vertx, pfa, resourceOperatorSupplier, config);
+
         KafkaMirrorMakerAssemblyOperator kafkaMirrorMakerAssemblyOperator =
                 new KafkaMirrorMakerAssemblyOperator(vertx, pfa, certManager, passwordGenerator, resourceOperatorSupplier, config);
 
         KafkaBridgeAssemblyOperator kafkaBridgeAssemblyOperator =
                 new KafkaBridgeAssemblyOperator(vertx, pfa, certManager, passwordGenerator, resourceOperatorSupplier, config);
 
-        List<Future> futures = new ArrayList<>();
+        KafkaRebalanceAssemblyOperator kafkaRebalanceAssemblyOperator =
+                new KafkaRebalanceAssemblyOperator(vertx, pfa, resourceOperatorSupplier);
+
+        List<Future> futures = new ArrayList<>(config.getNamespaces().size());
         for (String namespace : config.getNamespaces()) {
             Promise<String> prom = Promise.promise();
             futures.add(prom.future());
@@ -129,7 +144,10 @@ public class Main {
                     kafkaConnectClusterOperations,
                     kafkaConnectS2IClusterOperations,
                     kafkaMirrorMakerAssemblyOperator,
-                    kafkaBridgeAssemblyOperator);
+                    kafkaMirrorMaker2AssemblyOperator,
+                    kafkaBridgeAssemblyOperator,
+                    kafkaRebalanceAssemblyOperator,
+                    resourceOperatorSupplier.metricsProvider);
             vertx.deployVerticle(operator,
                 res -> {
                     if (res.succeeded()) {
@@ -177,7 +195,7 @@ public class Main {
             }
 
             Promise<Void> returnPromise = Promise.promise();
-            CompositeFuture.all(futures).setHandler(res -> {
+            CompositeFuture.all(futures).onComplete(res -> {
                 if (res.succeeded())    {
                     returnPromise.complete();
                 } else  {
@@ -189,14 +207,5 @@ public class Main {
         } else {
             return Future.succeededFuture();
         }
-    }
-
-    static void printEnvInfo() {
-        Map<String, String> m = new HashMap<>(System.getenv());
-        StringBuilder sb = new StringBuilder();
-        for (Map.Entry<String, String> entry: m.entrySet()) {
-            sb.append("\t").append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
-        }
-        log.info("Using config:\n" + sb.toString());
     }
 }

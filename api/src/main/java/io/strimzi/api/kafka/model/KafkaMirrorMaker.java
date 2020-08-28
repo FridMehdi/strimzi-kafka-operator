@@ -37,7 +37,8 @@ import static java.util.Collections.unmodifiableList;
                 names = @Crd.Spec.Names(
                         kind = KafkaMirrorMaker.RESOURCE_KIND,
                         plural = KafkaMirrorMaker.RESOURCE_PLURAL,
-                        shortNames = {KafkaMirrorMaker.SHORT_NAME}
+                        shortNames = {KafkaMirrorMaker.SHORT_NAME},
+                        categories = {Constants.STRIMZI_CATEGORY}
                 ),
                 group = KafkaMirrorMaker.RESOURCE_GROUP,
                 scope = KafkaMirrorMaker.SCOPE,
@@ -55,12 +56,17 @@ import static java.util.Collections.unmodifiableList;
                         )
                 },
                 subresources = @Crd.Spec.Subresources(
-                        status = @Crd.Spec.Subresources.Status()
+                        status = @Crd.Spec.Subresources.Status(),
+                        scale = @Crd.Spec.Subresources.Scale(
+                                specReplicasPath = KafkaMirrorMaker.SPEC_REPLICAS_PATH,
+                                statusReplicasPath = KafkaMirrorMaker.STATUS_REPLICAS_PATH,
+                                labelSelectorPath = KafkaMirrorMaker.LABEL_SELECTOR_PATH
+                        )
                 ),
                 additionalPrinterColumns = {
                         @Crd.Spec.AdditionalPrinterColumn(
                                 name = "Desired replicas",
-                                description = "The desired number of Kafka Mirror Maker replicas",
+                                description = "The desired number of Kafka MirrorMaker replicas",
                                 jsonPath = ".spec.replicas",
                                 type = "integer"
                         ),
@@ -83,8 +89,7 @@ import static java.util.Collections.unmodifiableList;
 )
 @Buildable(
         editableEnabled = false,
-        generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder",
+        builderPackage = Constants.FABRIC8_KUBERNETES_API,
         inline = @Inline(type = Doneable.class, prefix = "Doneable", value = "done"),
         refs = {@BuildableReference(ObjectMeta.class)}
 )
@@ -96,18 +101,21 @@ public class KafkaMirrorMaker extends CustomResource implements UnknownPropertyP
     private static final long serialVersionUID = 1L;
 
     public static final String SCOPE = "Namespaced";
-    public static final String V1ALPHA1 = "v1alpha1";
-    public static final String V1BETA1 = "v1beta1";
+    public static final String V1ALPHA1 = Constants.V1ALPHA1;
+    public static final String V1BETA1 = Constants.V1BETA1;
     public static final List<String> VERSIONS = unmodifiableList(asList(V1BETA1, V1ALPHA1));
     public static final String RESOURCE_KIND = "KafkaMirrorMaker";
     public static final String RESOURCE_LIST_KIND = RESOURCE_KIND + "List";
-    public static final String RESOURCE_GROUP = "kafka.strimzi.io";
+    public static final String RESOURCE_GROUP = Constants.RESOURCE_GROUP_NAME;
     public static final String RESOURCE_PLURAL = "kafkamirrormakers";
     public static final String RESOURCE_SINGULAR = "kafkamirrormaker";
-    public static final String CRD_API_VERSION = "apiextensions.k8s.io/v1beta1";
+    public static final String CRD_API_VERSION = Constants.V1BETA1_API_VERSION;
     public static final String CRD_NAME = RESOURCE_PLURAL + "." + RESOURCE_GROUP;
     public static final String SHORT_NAME = "kmm";
     public static final List<String> RESOURCE_SHORTNAMES = singletonList(SHORT_NAME);
+    public static final String SPEC_REPLICAS_PATH = ".spec.replicas";
+    public static final String STATUS_REPLICAS_PATH = ".status.replicas";
+    public static final String LABEL_SELECTOR_PATH = ".status.labelSelector";
 
     private String apiVersion;
     private ObjectMeta metadata;
@@ -135,7 +143,7 @@ public class KafkaMirrorMaker extends CustomResource implements UnknownPropertyP
         super.setMetadata(metadata);
     }
 
-    @Description("The specification of Kafka Mirror Maker.")
+    @Description("The specification of Kafka MirrorMaker.")
     public KafkaMirrorMakerSpec getSpec() {
         return spec;
     }
@@ -145,7 +153,7 @@ public class KafkaMirrorMaker extends CustomResource implements UnknownPropertyP
     }
 
     @Override
-    @Description("The status of Kafka Mirror Maker.")
+    @Description("The status of Kafka MirrorMaker.")
     public KafkaMirrorMakerStatus getStatus() {
         return status;
     }
@@ -162,7 +170,7 @@ public class KafkaMirrorMaker extends CustomResource implements UnknownPropertyP
     @Override
     public void setAdditionalProperty(String name, Object value) {
         if (this.additionalProperties == null) {
-            this.additionalProperties = new HashMap<>();
+            this.additionalProperties = new HashMap<>(1);
         }
         this.additionalProperties.put(name, value);
     }

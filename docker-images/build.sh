@@ -6,7 +6,7 @@ source $(dirname $(realpath $0))/../multi-platform-support.sh
 
 # Image directories
 base_images="base"
-java_images="operator"
+java_images="operator jmxtrans"
 kafka_image="kafka"
 kafka_images="kafka test-client"
 
@@ -145,7 +145,7 @@ function build {
     
     local targets=$*
     local tag="${DOCKER_TAG:-latest}"
-    local java_version="${JAVA_VERSION:-1.8.0}"
+    local java_version="${JAVA_VERSION:-11}"
 
     # Base images
     for image in $base_images
@@ -183,7 +183,6 @@ function build {
                 THIRD_PARTY_LIBS="${lib_directory}"
         done
     done
-
 }
 
 dependency_check

@@ -6,6 +6,7 @@ package io.strimzi.api.kafka.model.status;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import io.strimzi.api.kafka.model.Constants;
 import io.strimzi.api.kafka.model.UnknownPropertyPreserving;
 import io.strimzi.crdgenerator.annotations.Description;
 import io.sundr.builder.annotations.Buildable;
@@ -23,8 +24,7 @@ import static java.util.Collections.emptyMap;
  */
 @Buildable(
         editableEnabled = false,
-        generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder"
+        builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonPropertyOrder({ "address", "host", "port" })
@@ -37,7 +37,7 @@ public class ListenerAddress implements UnknownPropertyPreserving, Serializable 
     private Integer port;
     private Map<String, Object> additionalProperties;
 
-    @Description("The DNS name or IP address of Kafka bootstrap service")
+    @Description("The DNS name or IP address of the Kafka bootstrap service")
     public String getHost() {
         return host;
     }
@@ -63,7 +63,7 @@ public class ListenerAddress implements UnknownPropertyPreserving, Serializable 
     @Override
     public void setAdditionalProperty(String name, Object value) {
         if (this.additionalProperties == null) {
-            this.additionalProperties = new HashMap<>();
+            this.additionalProperties = new HashMap<>(1);
         }
         this.additionalProperties.put(name, value);
     }

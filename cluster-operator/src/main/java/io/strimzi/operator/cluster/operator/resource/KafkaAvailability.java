@@ -6,7 +6,7 @@ package io.strimzi.operator.cluster.operator.resource;
 
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
-import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.ListTopicsOptions;
@@ -35,10 +35,10 @@ class KafkaAvailability {
 
     private static final Logger log = LogManager.getLogger(KafkaAvailability.class.getName());
 
-    private final AdminClient ac;
+    private final Admin ac;
     private final Future<Collection<TopicDescription>> descriptions;
 
-    KafkaAvailability(AdminClient ac) {
+    KafkaAvailability(Admin ac) {
         this.ac = ac;
         // 1. Get all topic names
         Future<Set<String>> topicNames = topicNames();
@@ -103,7 +103,11 @@ class KafkaAvailability {
         for (TopicPartitionInfo pi : td.partitions()) {
             List<Node> isr = pi.isr();
             if (minIsr >= 0) {
-                if (isr.size() < minIsr
+                if (pi.replicas().size() <= minIsr) {
+                    log.debug("{}/{} will be underreplicated (|ISR|={} and {}={}) if broker {} is restarted, but there are only {} replicas.",
+                            td.name(), pi.partition(), isr.size(), TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, minIsr, broker,
+                            pi.replicas().size());
+                } else if (isr.size() < minIsr
                         && contains(pi.replicas(), broker)) {
                     logIsrReplicas(td, pi, isr);
                     log.info("{}/{} is already underreplicated (|ISR|={}, {}={}); broker {} has a replica, " +
@@ -118,7 +122,7 @@ class KafkaAvailability {
                                 td.name(), pi.partition(), isr.size(), TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, minIsr, broker);
                         return true;
                     } else {
-                        log.debug("{}/{} will be underreplicated (|ISR|={} and {}={}) if broker {} is restarted, but there are only {} relicas.",
+                        log.debug("{}/{} will be underreplicated (|ISR|={} and {}={}) if broker {} is restarted, but there are only {} replicas.",
                                 td.name(), pi.partition(), isr.size(), TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, minIsr, broker,
                                 pi.replicas().size());
                     }

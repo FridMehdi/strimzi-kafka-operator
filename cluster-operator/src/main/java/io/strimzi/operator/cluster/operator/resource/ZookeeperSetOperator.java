@@ -17,7 +17,8 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
-import java.util.function.Predicate;
+import java.util.List;
+import java.util.function.Function;
 
 
 /**
@@ -47,11 +48,6 @@ public class ZookeeperSetOperator extends StatefulSetOperator {
     }
 
     public static boolean needsRollingUpdate(StatefulSetDiff diff) {
-        // Because for ZK the brokers know about each other via the config, and rescaling requires a rolling update
-        if (diff.changesSpecReplicas()) {
-            log.debug("Changed #replicas => needs rolling update");
-            return true;
-        }
         if (diff.changesLabels()) {
             log.debug("Changed labels => needs rolling update");
             return true;
@@ -72,18 +68,19 @@ public class ZookeeperSetOperator extends StatefulSetOperator {
     }
 
     @Override
-    public Future<Void> maybeRollingUpdate(StatefulSet sts, Predicate<Pod> podRestart, Secret clusterCaSecret, Secret coKeySecret) {
+    public Future<Void> maybeRollingUpdate(StatefulSet sts, Function<Pod, List<String>> podRestart, Secret clusterCaSecret, Secret coKeySecret) {
         String namespace = sts.getMetadata().getNamespace();
         String name = sts.getMetadata().getName();
         final int replicas = sts.getSpec().getReplicas();
         log.debug("Considering rolling update of {}/{}", namespace, name);
 
         boolean zkRoll = false;
-        ArrayList<Pod> pods = new ArrayList<>();
+        ArrayList<Pod> pods = new ArrayList<>(replicas);
         String cluster = sts.getMetadata().getLabels().get(Labels.STRIMZI_CLUSTER_LABEL);
         for (int i = 0; i < replicas; i++) {
             Pod pod = podOperations.get(sts.getMetadata().getNamespace(), KafkaResources.zookeeperPodName(cluster, i));
-            zkRoll |= podRestart.test(pod);
+            List<String> zkPodRestart = podRestart.apply(pod);
+            zkRoll |= zkPodRestart != null && !zkPodRestart.isEmpty();
             pods.add(pod);
         }
 
@@ -118,7 +115,7 @@ public class ZookeeperSetOperator extends StatefulSetOperator {
                         return maybeRestartPod(sts, KafkaResources.zookeeperPodName(cluster, leader), podRestart);
                     });
                 }
-            }).setHandler(rollFuture);
+            }).onComplete(rollFuture);
         } else {
             rollFuture = Future.succeededFuture();
         }

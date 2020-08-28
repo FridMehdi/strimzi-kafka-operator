@@ -6,8 +6,10 @@ package io.strimzi.api.kafka.model.listener;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import io.strimzi.api.kafka.model.Constants;
 import io.strimzi.api.kafka.model.UnknownPropertyPreserving;
 import io.strimzi.crdgenerator.annotations.Description;
+import io.strimzi.crdgenerator.annotations.DescriptionFile;
 import io.sundr.builder.annotations.Buildable;
 import lombok.EqualsAndHashCode;
 
@@ -21,12 +23,12 @@ import static java.util.Collections.emptyMap;
 /**
  * Configures overrides NodePort listeners
  */
+@DescriptionFile
 @JsonPropertyOrder({"bootstrap", "brokers"})
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @Buildable(
     editableEnabled = false,
-    generateBuilderPackage = false,
-    builderPackage = "io.fabric8.kubernetes.api.builder"
+    builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @EqualsAndHashCode
 public class NodePortListenerOverride implements Serializable, UnknownPropertyPreserving {
@@ -64,7 +66,7 @@ public class NodePortListenerOverride implements Serializable, UnknownPropertyPr
     @Override
     public void setAdditionalProperty(String name, Object value) {
         if (this.additionalProperties == null) {
-            this.additionalProperties = new HashMap<>();
+            this.additionalProperties = new HashMap<>(1);
         }
         this.additionalProperties.put(name, value);
     }

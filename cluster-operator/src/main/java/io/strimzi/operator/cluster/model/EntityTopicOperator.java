@@ -7,6 +7,8 @@ package io.strimzi.operator.cluster.model;
 import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.ContainerBuilder;
 import io.fabric8.kubernetes.api.model.EnvVar;
+import io.fabric8.kubernetes.api.model.HasMetadata;
+import io.fabric8.kubernetes.api.model.SecurityContext;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeMount;
 import io.fabric8.kubernetes.api.model.rbac.RoleBinding;
@@ -22,7 +24,7 @@ import io.strimzi.api.kafka.model.Kafka;
 import io.strimzi.api.kafka.model.Probe;
 import io.strimzi.api.kafka.model.ProbeBuilder;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
-import io.strimzi.operator.common.model.Labels;
+import io.strimzi.operator.common.model.OrderedProperties;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -35,6 +37,7 @@ import static java.util.Collections.singletonList;
  * Represents the Topic Operator deployment
  */
 public class EntityTopicOperator extends AbstractModel {
+    protected static final String APPLICATION_NAME = "entity-topic-operator";
 
     protected static final String TOPIC_OPERATOR_CONTAINER_NAME = "topic-operator";
     private static final String NAME_SUFFIX = "-entity-topic-operator";
@@ -67,14 +70,13 @@ public class EntityTopicOperator extends AbstractModel {
     private String resourceLabels;
     private int topicMetadataMaxAttempts;
     protected List<ContainerEnvVar> templateContainerEnvVars;
+    protected SecurityContext templateContainerSecurityContext;
 
     /**
-     * @param namespace Kubernetes/OpenShift namespace where cluster resources are going to be created
-     * @param cluster overall cluster name
-     * @param labels
+     * @param resource Kubernetes resource with metadata containing the namespace and cluster name
      */
-    protected EntityTopicOperator(String namespace, String cluster, Labels labels) {
-        super(namespace, cluster, labels);
+    protected EntityTopicOperator(HasMetadata resource) {
+        super(resource, APPLICATION_NAME);
         this.name = topicOperatorName(cluster);
         this.readinessPath = "/";
         this.readinessProbeOptions = DEFAULT_HEALTHCHECK_OPTIONS;
@@ -90,7 +92,7 @@ public class EntityTopicOperator extends AbstractModel {
         this.resourceLabels = ModelUtils.defaultResourceLabels(cluster);
         this.topicMetadataMaxAttempts = EntityTopicOperatorSpec.DEFAULT_TOPIC_METADATA_MAX_ATTEMPTS;
 
-        this.ancillaryConfigName = metricAndLogConfigsName(cluster);
+        this.ancillaryConfigMapName = metricAndLogConfigsName(cluster);
         this.logAndMetricsConfigVolumeName = "entity-topic-operator-metrics-and-logging";
         this.logAndMetricsConfigMountPath = "/opt/topic-operator/custom-config/";
     }
@@ -182,7 +184,7 @@ public class EntityTopicOperator extends AbstractModel {
     }
 
     @Override
-    String getAncillaryConfigMapKeyLogConfig() {
+    public String getAncillaryConfigMapKeyLogConfig() {
         return "log4j2.properties";
     }
 
@@ -201,10 +203,7 @@ public class EntityTopicOperator extends AbstractModel {
             if (topicOperatorSpec != null) {
 
                 String namespace = kafkaAssembly.getMetadata().getNamespace();
-                result = new EntityTopicOperator(
-                        namespace,
-                        kafkaAssembly.getMetadata().getName(),
-                        Labels.fromResource(kafkaAssembly).withKind(kafkaAssembly.getKind()));
+                result = new EntityTopicOperator(kafkaAssembly);
 
                 result.setOwnerReference(kafkaAssembly);
                 String image = topicOperatorSpec.getImage();
@@ -218,6 +217,10 @@ public class EntityTopicOperator extends AbstractModel {
                 result.setTopicMetadataMaxAttempts(topicOperatorSpec.getTopicMetadataMaxAttempts());
                 result.setLogging(topicOperatorSpec.getLogging());
                 result.setGcLoggingEnabled(topicOperatorSpec.getJvmOptions() == null ? DEFAULT_JVM_GC_LOGGING_ENABLED : topicOperatorSpec.getJvmOptions().isGcLoggingEnabled());
+                if (topicOperatorSpec.getJvmOptions() != null) {
+                    result.setJavaSystemProperties(topicOperatorSpec.getJvmOptions().getJavaSystemProperties());
+                }
+                result.setJvmOptions(topicOperatorSpec.getJvmOptions());
                 result.setResources(topicOperatorSpec.getResources());
                 if (topicOperatorSpec.getReadinessProbe() != null) {
                     result.setReadinessProbe(topicOperatorSpec.getReadinessProbe());
@@ -244,6 +247,7 @@ public class EntityTopicOperator extends AbstractModel {
                 .withResources(getResources())
                 .withVolumeMounts(getVolumeMounts())
                 .withImagePullPolicy(determineImagePullPolicy(imagePullPolicy, getImage()))
+                .withSecurityContext(templateContainerSecurityContext)
                 .build());
     }
 
@@ -259,6 +263,10 @@ public class EntityTopicOperator extends AbstractModel {
         varList.add(buildEnvVar(ENV_VAR_TOPIC_METADATA_MAX_ATTEMPTS, String.valueOf(topicMetadataMaxAttempts)));
         varList.add(buildEnvVar(ENV_VAR_TLS_ENABLED, Boolean.toString(true)));
         varList.add(buildEnvVar(ENV_VAR_STRIMZI_GC_LOG_ENABLED, String.valueOf(gcLoggingEnabled)));
+        EntityOperator.javaOptions(varList, getJvmOptions(), javaSystemProperties);
+
+        // Add shared environment variables used for all containers
+        varList.addAll(getSharedEnvVars());
 
         addContainerEnvsToExistingEnvs(varList, templateContainerEnvVars);
 
@@ -266,13 +274,13 @@ public class EntityTopicOperator extends AbstractModel {
     }
 
     public List<Volume> getVolumes() {
-        return singletonList(createConfigMapVolume(logAndMetricsConfigVolumeName, ancillaryConfigName));
+        return singletonList(VolumeUtils.createConfigMapVolume(logAndMetricsConfigVolumeName, ancillaryConfigMapName));
     }
 
     private List<VolumeMount> getVolumeMounts() {
-        return asList(createVolumeMount(logAndMetricsConfigVolumeName, logAndMetricsConfigMountPath),
-            createVolumeMount(EntityOperator.TLS_SIDECAR_EO_CERTS_VOLUME_NAME, EntityOperator.TLS_SIDECAR_EO_CERTS_VOLUME_MOUNT),
-            createVolumeMount(EntityOperator.TLS_SIDECAR_CA_CERTS_VOLUME_NAME, EntityOperator.TLS_SIDECAR_CA_CERTS_VOLUME_MOUNT));
+        return asList(VolumeUtils.createVolumeMount(logAndMetricsConfigVolumeName, logAndMetricsConfigMountPath),
+            VolumeUtils.createVolumeMount(EntityOperator.TLS_SIDECAR_EO_CERTS_VOLUME_NAME, EntityOperator.TLS_SIDECAR_EO_CERTS_VOLUME_MOUNT),
+            VolumeUtils.createVolumeMount(EntityOperator.TLS_SIDECAR_CA_CERTS_VOLUME_NAME, EntityOperator.TLS_SIDECAR_CA_CERTS_VOLUME_MOUNT));
     }
 
     public RoleBinding generateRoleBinding(String namespace, String watchedNamespace) {
@@ -305,4 +313,22 @@ public class EntityTopicOperator extends AbstractModel {
     public void setContainerEnvVars(List<ContainerEnvVar> envVars) {
         templateContainerEnvVars = envVars;
     }
+
+    public void setContainerSecurityContext(SecurityContext securityContext) {
+        templateContainerSecurityContext = securityContext;
+    }
+
+    /**
+     * Transforms properties to log4j2 properties file format and adds property for reloading the config
+     * @param properties map with properties
+     * @return modified string with monitorInterval
+     */
+    @Override
+    public String createLog4jProperties(OrderedProperties properties) {
+        if (!properties.asMap().keySet().contains("monitorInterval")) {
+            properties.addPair("monitorInterval", "30");
+        }
+        return super.createLog4jProperties(properties);
+    }
+
 }

@@ -5,6 +5,7 @@
 package io.strimzi.api.kafka.model.status;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import io.strimzi.api.kafka.model.Constants;
 import io.strimzi.api.kafka.model.UnknownPropertyPreserving;
 import io.strimzi.crdgenerator.annotations.Description;
 import io.sundr.builder.annotations.Buildable;
@@ -12,6 +13,8 @@ import lombok.EqualsAndHashCode;
 import lombok.ToString;
 
 import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,8 +26,7 @@ import static java.util.Collections.emptyMap;
  */
 @Buildable(
         editableEnabled = false,
-        generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder"
+        builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @EqualsAndHashCode
@@ -41,6 +43,24 @@ public abstract class Status implements UnknownPropertyPreserving, Serializable 
 
     public void setConditions(List<Condition> conditions) {
         this.conditions = conditions;
+    }
+
+    private List<Condition> prepareConditionsUpdate() {
+        List<Condition> oldConditions = getConditions();
+        List<Condition> newConditions = oldConditions != null ? new ArrayList<>(oldConditions) : new ArrayList<>(0);
+        return newConditions;
+    }
+
+    public void addCondition(Condition condition) {
+        List<Condition> newConditions = prepareConditionsUpdate();
+        newConditions.add(condition);
+        setConditions(Collections.unmodifiableList(newConditions));
+    }
+
+    public void addConditions(List<Condition> conditions) {
+        List<Condition> newConditions = prepareConditionsUpdate();
+        newConditions.addAll(conditions);
+        setConditions(Collections.unmodifiableList(newConditions));
     }
 
     @Description("The generation of the CRD that was last reconciled by the operator.")
@@ -61,7 +81,7 @@ public abstract class Status implements UnknownPropertyPreserving, Serializable 
     @Override
     public void setAdditionalProperty(String name, Object value) {
         if (this.additionalProperties == null) {
-            this.additionalProperties = new HashMap<>();
+            this.additionalProperties = new HashMap<>(1);
         }
         this.additionalProperties.put(name, value);
     }

@@ -9,7 +9,6 @@ import io.fabric8.kubernetes.api.model.EnvVar;
 import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.ResourceRequirements;
 import io.fabric8.kubernetes.api.model.ResourceRequirementsBuilder;
-import io.fabric8.kubernetes.api.model.Volume;
 import io.strimzi.api.kafka.model.JvmOptions;
 import io.strimzi.api.kafka.model.Kafka;
 import io.strimzi.api.kafka.model.KafkaBuilder;
@@ -47,9 +46,12 @@ public class AbstractModelTest {
         assertThat(env.get(AbstractModel.ENV_VAR_DYNAMIC_HEAP_MAX), is(nullValue()));
     }
 
-    private Map<String, String> getStringStringMap(String xmx, String xms, double dynamicFraction, long dynamicMax,
-                                                   ResourceRequirements resources) {
-        AbstractModel am = new AbstractModel(null, null, Labels.forCluster("foo")) {
+    private Map<String, String> getStringStringMap(String xmx, String xms, double dynamicFraction, long dynamicMax, ResourceRequirements resources) {
+        Kafka resource = new KafkaBuilder()
+                .withNewMetadata()
+                .endMetadata()
+                .build();
+        AbstractModel am = new AbstractModel(resource, "") {
             @Override
             protected String getDefaultLogConfigFileName() {
                 return "";
@@ -60,6 +62,8 @@ public class AbstractModelTest {
                 return emptyList();
             }
         };
+
+        am.setLabels(Labels.forStrimziCluster("foo"));
         am.setJvmOptions(jvmOptions(xmx, xms));
         am.setResources(resources);
         List<EnvVar> envVars = new ArrayList<>(1);
@@ -142,7 +146,12 @@ public class AbstractModelTest {
     }
 
     private String getPerformanceOptions(JvmOptions opts) {
-        AbstractModel am = new AbstractModel(null, null, Labels.forCluster("foo")) {
+        Kafka kafka = new KafkaBuilder()
+                .withNewMetadata()
+                .endMetadata()
+                .build();
+
+        AbstractModel am = new AbstractModel(kafka, "") {
             @Override
             protected String getDefaultLogConfigFileName() {
                 return "";
@@ -153,6 +162,8 @@ public class AbstractModelTest {
                 return emptyList();
             }
         };
+
+        am.setLabels(Labels.forStrimziCluster("foo"));
         am.setJvmOptions(opts);
         List<EnvVar> envVars = new ArrayList<>(1);
         am.jvmPerformanceOptions(envVars);
@@ -165,15 +176,15 @@ public class AbstractModelTest {
     }
 
     @Test
-    public void testOwnerReference()    {
+    public void testOwnerReference() {
         Kafka kafka = new KafkaBuilder()
                 .withNewMetadata()
                     .withName("my-cluster")
-                .withNamespace("my-namespace")
+                    .withNamespace("my-namespace")
                 .endMetadata()
                 .build();
 
-        AbstractModel am = new AbstractModel(kafka.getMetadata().getNamespace(), kafka.getMetadata().getName(), Labels.forCluster("foo")) {
+        AbstractModel am = new AbstractModel(kafka, "my-app") {
             @Override
             protected String getDefaultLogConfigFileName() {
                 return "";
@@ -184,6 +195,7 @@ public class AbstractModelTest {
                 return emptyList();
             }
         };
+        am.setLabels(Labels.forStrimziCluster("foo"));
         am.setOwnerReference(kafka);
 
         OwnerReference ref = am.createOwnerReference();
@@ -196,7 +208,14 @@ public class AbstractModelTest {
 
     @Test
     public void testDetermineImagePullPolicy()  {
-        AbstractModel am = new AbstractModel("my-namespace", "my-cluster", Labels.forCluster("my-cluster")) {
+        Kafka kafka = new KafkaBuilder()
+                .withNewMetadata()
+                    .withName("my-cluster")
+                    .withNamespace("my-namespace")
+                .endMetadata()
+                .build();
+
+        AbstractModel am = new AbstractModel(kafka, "my-app") {
             @Override
             protected String getDefaultLogConfigFileName() {
                 return "";
@@ -207,62 +226,15 @@ public class AbstractModelTest {
                 return emptyList();
             }
         };
+        am.setLabels(Labels.forStrimziCluster("foo"));
 
         assertThat(am.determineImagePullPolicy(ImagePullPolicy.ALWAYS, "docker.io/repo/image:tag"), is(ImagePullPolicy.ALWAYS.toString()));
         assertThat(am.determineImagePullPolicy(ImagePullPolicy.IFNOTPRESENT, "docker.io/repo/image:tag"), is(ImagePullPolicy.IFNOTPRESENT.toString()));
+        assertThat(am.determineImagePullPolicy(ImagePullPolicy.IFNOTPRESENT, "docker.io/repo/image:latest"), is(ImagePullPolicy.IFNOTPRESENT.toString()));
         assertThat(am.determineImagePullPolicy(ImagePullPolicy.NEVER, "docker.io/repo/image:tag"), is(ImagePullPolicy.NEVER.toString()));
+        assertThat(am.determineImagePullPolicy(ImagePullPolicy.NEVER, "docker.io/repo/image:latest-kafka-2.6.0"), is(ImagePullPolicy.NEVER.toString()));
         assertThat(am.determineImagePullPolicy(null, "docker.io/repo/image:latest"), is(ImagePullPolicy.ALWAYS.toString()));
         assertThat(am.determineImagePullPolicy(null, "docker.io/repo/image:not-so-latest"), is(ImagePullPolicy.IFNOTPRESENT.toString()));
-    }
-
-    @Test
-    public void testCreateEmptyDirVolumeWithSizeLimit() {
-        AbstractModel am = new AbstractModel(null, null, Labels.forCluster("foo")) {
-            @Override
-            protected String getDefaultLogConfigFileName() {
-                return "";
-            }
-
-            @Override
-            protected List<Container> getContainers(ImagePullPolicy imagePullPolicy) {
-                return emptyList();
-            }
-        };
-        Volume volume = am.createEmptyDirVolume("bar", "1Gi");
-        assertThat(volume.getEmptyDir().getSizeLimit().getAmount(), is("1Gi"));
-    }
-
-    @Test
-    public void testCreateEmptyDirVolumeWithNullSizeLimit() {
-        AbstractModel am = new AbstractModel(null, null, Labels.forCluster("foo")) {
-            @Override
-            protected String getDefaultLogConfigFileName() {
-                return "";
-            }
-
-            @Override
-            protected List<Container> getContainers(ImagePullPolicy imagePullPolicy) {
-                return emptyList();
-            }
-        };
-        Volume volume = am.createEmptyDirVolume("bar", null);
-        assertThat(volume.getEmptyDir().getSizeLimit(), is(nullValue()));
-    }
-
-    @Test
-    public void testCreateEmptyDirVolumeWithEmptySizeLimit() {
-        AbstractModel am = new AbstractModel(null, null, Labels.forCluster("foo")) {
-            @Override
-            protected String getDefaultLogConfigFileName() {
-                return "";
-            }
-
-            @Override
-            protected List<Container> getContainers(ImagePullPolicy imagePullPolicy) {
-                return emptyList();
-            }
-        };
-        Volume volume = am.createEmptyDirVolume("bar", "");
-        assertThat(volume.getEmptyDir().getSizeLimit(), is(nullValue()));
+        assertThat(am.determineImagePullPolicy(null, "docker.io/repo/image:latest-kafka-2.6.0"), is(ImagePullPolicy.ALWAYS.toString()));
     }
 }

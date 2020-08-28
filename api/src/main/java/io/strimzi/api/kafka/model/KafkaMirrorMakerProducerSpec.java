@@ -5,6 +5,7 @@
 package io.strimzi.api.kafka.model;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import io.strimzi.crdgenerator.annotations.DescriptionFile;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import io.strimzi.crdgenerator.annotations.Description;
 import io.sundr.builder.annotations.Buildable;
@@ -12,10 +13,10 @@ import lombok.EqualsAndHashCode;
 
 import java.util.Map;
 
+@DescriptionFile
 @Buildable(
         editableEnabled = false,
-        generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder"
+        builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonPropertyOrder({ "bootstrapServers", "abortOnSendFailure", "logging"})
@@ -26,9 +27,9 @@ public class KafkaMirrorMakerProducerSpec extends KafkaMirrorMakerClientSpec {
     private Boolean abortOnSendFailure;
 
     public static final String FORBIDDEN_PREFIXES = "ssl., bootstrap.servers, sasl., security., interceptor.classes";
-    public static final String FORBIDDEN_PREFIX_EXCEPTIONS = "ssl.endpoint.identification.algorithm";
+    public static final String FORBIDDEN_PREFIX_EXCEPTIONS = "ssl.endpoint.identification.algorithm, ssl.cipher.suites, ssl.protocol, ssl.enabled.protocols";
 
-    @Description("Flag to set the Mirror Maker to exit on a failed send. Default value is `true`.")
+    @Description("Flag to set the MirrorMaker to exit on a failed send. Default value is `true`.")
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public Boolean getAbortOnSendFailure() {
         return abortOnSendFailure;
@@ -39,7 +40,7 @@ public class KafkaMirrorMakerProducerSpec extends KafkaMirrorMakerClientSpec {
     }
 
     @Override
-    @Description("The Mirror Maker producer config. Properties with the following prefixes cannot be set: " + FORBIDDEN_PREFIXES)
+    @Description("The MirrorMaker producer config. Properties with the following prefixes cannot be set: " + FORBIDDEN_PREFIXES + " (with the exception of: " + FORBIDDEN_PREFIX_EXCEPTIONS + ").")
     public Map<String, Object> getConfig() {
         return config;
     }

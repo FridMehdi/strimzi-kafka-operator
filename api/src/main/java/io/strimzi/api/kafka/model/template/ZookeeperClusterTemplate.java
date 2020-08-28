@@ -6,6 +6,8 @@ package io.strimzi.api.kafka.model.template;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import io.strimzi.api.annotations.DeprecatedProperty;
+import io.strimzi.api.kafka.model.Constants;
 import io.strimzi.api.kafka.model.UnknownPropertyPreserving;
 import io.strimzi.crdgenerator.annotations.Description;
 import io.sundr.builder.annotations.Buildable;
@@ -20,8 +22,7 @@ import java.util.Map;
  */
 @Buildable(
         editableEnabled = false,
-        generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder"
+        builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonPropertyOrder({
@@ -31,7 +32,7 @@ import java.util.Map;
 public class ZookeeperClusterTemplate implements Serializable, UnknownPropertyPreserving {
     private static final long serialVersionUID = 1L;
 
-    private ResourceTemplate statefulset;
+    private StatefulSetTemplate statefulset;
     private PodTemplate pod;
     private ResourceTemplate clientService;
     private ResourceTemplate nodesService;
@@ -43,11 +44,11 @@ public class ZookeeperClusterTemplate implements Serializable, UnknownPropertyPr
 
     @Description("Template for ZooKeeper `StatefulSet`.")
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
-    public ResourceTemplate getStatefulset() {
+    public StatefulSetTemplate getStatefulset() {
         return statefulset;
     }
 
-    public void setStatefulset(ResourceTemplate statefulset) {
+    public void setStatefulset(StatefulSetTemplate statefulset) {
         this.statefulset = statefulset;
     }
 
@@ -111,7 +112,10 @@ public class ZookeeperClusterTemplate implements Serializable, UnknownPropertyPr
         this.zookeeperContainer = zookeeperContainer;
     }
 
-    @Description("Template for the Kafka broker TLS sidecar container")
+    @DeprecatedProperty
+    @Deprecated
+    @Description("Template for the Zookeeper server TLS sidecar container. " +
+            "The TLS sidecar is not used anymore and this option will be ignored.")
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
     public ContainerTemplate getTlsSidecarContainer() {
         return tlsSidecarContainer;

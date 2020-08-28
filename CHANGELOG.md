@@ -1,6 +1,130 @@
 
 # CHANGELOG
 
+## 0.20.0
+
+* Add support for Kafka 2.5.1 and 2.6.0. Remove support for 2.4.0 and 2.4.1
+* Remove TLS sidecars from Kafka pods => Kafka now uses native TLS to connect to ZooKeeper
+* Updated to Cruise Control 2.5.11, which adds Kafka 2.6.0 support and fixes a previous issue with CPU utilization statistics for containers. As a result, the CPUCapacityGoal has now been enabled.
+* Cruise Control metrics integration:
+  * Enable metrics JMX exporter configuration in the `cruiseControl` property of the Kafka custom resource
+  * New Grafana dashboard for the Cruise Control metrics
+* Configure Cluster Operator logging using ConfigMap instead of environment variable and support dynamic changes  
+* Switch to use the `AclAuthorizer` class for the `simple` Kafka authorization type. `AclAuthorizer` contains new features such as the ability to control the amount of authorization logs in the broker logs.
+* Support dynamically changeable logging configuration of Kafka Connect and Kafka Connect S2I
+* Support dynamically changeable logging configuration of Kafka brokers
+* Support dynamically changeable logging configuration of Kafka MirrorMaker2
+
+### Deprecations and removals
+
+#### Removal of monitoring port on Kafka and ZooKeeper related services
+
+The `PodMonitor` resource is now used instead of the `ServiceMonitor` for scraping metrics from Kafka, ZooKeeper, Kafka Connect and so on.
+For this reason, we have removed the monitoring port `tcp-prometheus` (9404) on all the services where it is declared (Kafka bootstrap, ZooKeeper client and so on).
+It was already deprecated in the previous 0.19.0 release.
+Together with it we have also removed the Prometheus annotations from the services. If you want to add them, you can use the templates.
+See here https://strimzi.io/docs/operators/master/using.html#assembly-customizing-kubernetes-resources-str for more details about templates usage.
+Finally, the Kafka Exporter service was has been removed because it was used just for the monitoring port.
+
+#### Deprecation of Kafka TLS sidecar configuration
+
+Since the Kafka TLS sidecar has been removed, the related configuration options in the Kafka custom resource are now deprecated:
+* `.spec.kafka.tlsSidecar`
+* `.spec.kafka.template.tlsSidecar`
+
+## 0.19.0
+
+* Add support for authorization using Open Policy Agent
+* Add support for scale subresource to make scaling of following resources easier:
+  * KafkaConnect
+  * KafkaConnectS2I
+  * KafkaBridge
+  * KafkaMirrorMaker
+  * KafkaMirrorMaker2
+  * KafkaConnector 
+* Remove deprecated `Kafka.spec.topicOperator` classes and deployment logic
+* Use Java 11 as the Java runtime
+* Removed the need to manually create Cruise Control metrics topics if topic auto creation is disabled.
+* Migration to Helm 3
+* Refactored the format of the `KafkaRebalance` resource's status. The state of the rebalance is now displayed in the associated `Condition`'s `type` field rather than the `status` field. This was done so that the information would display correctly in various Kubernetes tools.
+* Added performance tuning options to the `KafkaRebalance` CR and the ability to define a regular expression that will exclude matching topics from a rebalance optimization proposal.
+* Use Strimzi Kafka Bridge 0.18.0
+* Make it possible to configure labels and annotations for secrets created by the User Operator
+* Strimzi Kafka Bridge metrics integration:
+  * enable/disable metrics in the KafkaBridge custom resource
+  * new Grafana dashboard for the bridge metrics
+* Support dynamically changeable logging in the Entity Operator and Kafka Bridge 
+* Extended the Grafana example dashboard for Kafka Connect to provide more relevant information
+
+### Deprecations and removals
+
+#### Deprecation of Helm v2 chart
+
+The Helm v2 support will end soon. 
+Bug fixing should stop on August 13th 2020 and security fixes on November 13th.
+See https://helm.sh/blog/covid-19-extending-helm-v2-bug-fixes/ for more details.
+
+In sync with that, the Helm v2 chart of Strimzi Cluster Operator is now deprecated and will be removed in the future as Helm v2 support ends.
+Since Strimzi 0.19.0, we have a new chart for Helm v3 which can be used instead.
+
+#### Removal of v1alpha1 versions of several custom resources
+
+In Strimzi 0.12.0, the `v1alpha1` versions of the following resources have been deprecated and replaced by `v1beta1`:
+* `Kafka`
+* `KafkaConnect`
+* `KafkaConnectS2I`
+* `KafkaMirrorMaker`
+* `KafkaTopic`
+* `KafkaUser`
+
+In the next release, the `v1alpha1` versions of these resources will be removed. 
+Please follow the guide for upgrading the resources: https://strimzi.io/docs/operators/latest/full/deploying.html#assembly-upgrade-resources-str.
+
+#### Removal deprecated cadvisor metric labels
+
+The `pod_name` and `container_name` labels provided on the cadvisor metrics are now just `pod` and `container` starting from Kubernetes 1.16.
+We removed the old ones from the Prometheus scraping configuration/alerts and on the Kafka and ZooKeeper dashboard as well.
+It means that the charts related to memory and CPU usage are not going to work on Kuvbernetes version previous 1.14.
+For more information on what is changed: https://github.com/strimzi/strimzi-kafka-operator/pull/3312
+
+#### Deprecation of monitoring port on Kafka and ZooKeeper related services
+
+The `PodMonitor` resource is now used instead of the `ServiceMonitor` for scraping metrics from Kafka, ZooKeeper, Kafka Connect and so on.
+For this reason, we are deprecating the monitoring port `tcp-prometheus` (9404) on all the services where it is declared (Kafka bootstrap, ZooKeeper client and so on).
+This port will be removed in the next release.
+Together with it we will also remove the Prometheus annotation from the service.
+
+#### Removal warning of Cluster Operator log level
+
+Because of the new Cluster Operator dynamic logging configuration via [PR#3328](https://github.com/strimzi/strimzi-kafka-operator/pull/3328) we are going to remove the `STRIMZI_LOG_LEVEL` environment variable from the Cluster Operator deployment YAML file in the 0.20.0 release.
+
+## 0.18.0
+
+* Add possibility to set Java System Properties for User Operator and Topic Operator via `Kafka` CR.
+* Make it possible to configure PodManagementPolicy for StatefulSets
+* Update build system to use `yq` version 3 (https://github.com/mikefarah/yq)
+* Add more metrics to Cluster and User Operators
+* New Grafana dashboard for Operator monitoring 
+* Allow `ssl.cipher.suites`, `ssl.protocol` and `ssl.enabled.protocols` to be configurable for Kafka and the different components supported by Strimzi
+* Add support for user configurable SecurityContext for each Strimzi container
+* Allow standalone User Operator to modify status on KafkaUser
+* Add support for Kafka 2.4.1
+* Add support for Kafka 2.5.0
+* Remove TLS sidecars from ZooKeeper pods, using native ZooKeeper TLS support instead
+* Add metrics for Topic Operator
+* Use Strimzi Kafka Bridge 0.16.0
+* Add support for CORS in the HTTP Kafka Bridge
+* Pass HTTP Proxy configuration from operator to operands
+* Add Cruise Control support, KafkaRebalance resource and rebalance operator
+
+## 0.17.0
+
+* Add possibility to set Java System Properties via CR yaml
+* Add support for Mirror Maker 2.0
+* Add Jmxtrans deployment
+* Add public keys of TLS listeners to the status section of the Kafka CR
+* Add support for using a Kafka authorizer backed by Keycloak Authorization Services
+
 ## 0.16.0
 
 * Add support for Kafka 2.4.0 and upgrade from Zookeeper 3.4.x to 3.5.x

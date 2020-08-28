@@ -10,8 +10,8 @@ import io.strimzi.test.k8s.KubeClient;
 import io.strimzi.test.k8s.exceptions.KubeClusterException;
 import io.strimzi.test.k8s.cmdClient.KubeCmdClient;
 import io.strimzi.test.k8s.cmdClient.Kubectl;
-
-import static io.strimzi.test.k8s.cluster.Minishift.CONFIG;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 /**
  * A {@link KubeCluster} implementation for {@code minikube} and {@code minishift}.
@@ -19,6 +19,9 @@ import static io.strimzi.test.k8s.cluster.Minishift.CONFIG;
 public class Minikube implements KubeCluster {
 
     public static final String CMD = "minikube";
+    private static final String OLM_NAMESPACE = "operators";
+    private static final Logger LOGGER = LogManager.getLogger(Minikube.class);
+
 
     @Override
     public boolean isAvailable() {
@@ -30,7 +33,7 @@ public class Minikube implements KubeCluster {
         try {
             return Exec.exec(CMD, "status").exitStatus();
         } catch (KubeClusterException e) {
-            e.printStackTrace();
+            LOGGER.debug("Error: ", e);
             return false;
         }
     }
@@ -47,5 +50,10 @@ public class Minikube implements KubeCluster {
 
     public String toString() {
         return CMD;
+    }
+
+    @Override
+    public String defaultOlmNamespace() {
+        return OLM_NAMESPACE;
     }
 }

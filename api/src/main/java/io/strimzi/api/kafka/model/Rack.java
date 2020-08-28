@@ -20,8 +20,7 @@ import java.util.Map;
  */
 @Buildable(
         editableEnabled = false,
-        generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder"
+        builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @EqualsAndHashCode
@@ -41,7 +40,7 @@ public class Rack implements UnknownPropertyPreserving, Serializable {
 
     @Description("A key that matches labels assigned to the Kubernetes cluster nodes. " +
             "The value of the label is used to set the broker's `broker.rack` config.")
-    @Example("failure-domain.beta.kubernetes.io/zone")
+    @Example("topology.kubernetes.io/zone")
     @JsonProperty(required = true)
     public String getTopologyKey() {
         return topologyKey;

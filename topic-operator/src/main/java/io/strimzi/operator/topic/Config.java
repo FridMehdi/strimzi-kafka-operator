@@ -99,12 +99,14 @@ public class Config {
     public static final String TC_REASSIGN_THROTTLE = "STRIMZI_REASSIGN_THROTTLE";
     public static final String TC_REASSIGN_VERIFY_INTERVAL_MS = "STRIMZI_REASSIGN_VERIFY_INTERVAL_MS";
     public static final String TC_TOPIC_METADATA_MAX_ATTEMPTS = "STRIMZI_TOPIC_METADATA_MAX_ATTEMPTS";
+    public static final String TC_TOPICS_PATH = "STRIMZI_TOPICS_PATH";
 
     public static final String TC_TLS_ENABLED = "STRIMZI_TLS_ENABLED";
     public static final String TC_TLS_TRUSTSTORE_LOCATION = "STRIMZI_TRUSTSTORE_LOCATION";
     public static final String TC_TLS_TRUSTSTORE_PASSWORD = "STRIMZI_TRUSTSTORE_PASSWORD";
     public static final String TC_TLS_KEYSTORE_LOCATION = "STRIMZI_KEYSTORE_LOCATION";
     public static final String TC_TLS_KEYSTORE_PASSWORD = "STRIMZI_KEYSTORE_PASSWORD";
+    public static final String TC_TLS_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM = "STRIMZI_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM";
 
     private static final Map<String, Value<?>> CONFIG_VALUES = new HashMap<>();
 
@@ -141,6 +143,9 @@ public class Config {
     /** The maximum number of retries for getting topic metadata from the Kafka cluster */
     public static final Value<Integer> TOPIC_METADATA_MAX_ATTEMPTS = new Value<>(TC_TOPIC_METADATA_MAX_ATTEMPTS, POSITIVE_INTEGER, "6");
 
+    /** The path to the Zookeeper node that stores the topic state in ZooKeeper. */
+    public static final Value<String> TOPICS_PATH = new Value<>(TC_TOPICS_PATH, STRING, "/strimzi/topics");
+
     /** If the connection with Kafka has to be encrypted by TLS protocol */
     public static final Value<String> TLS_ENABLED = new Value<>(TC_TLS_ENABLED, STRING, "false");
     /** The truststore with CA certificate for Kafka broker/server authentication */
@@ -151,6 +156,8 @@ public class Config {
     public static final Value<String> TLS_KEYSTORE_LOCATION = new Value<>(TC_TLS_KEYSTORE_LOCATION, STRING, "");
     /** The password for keystore with private key and certificate for client authentication against Kafka broker */
     public static final Value<String> TLS_KEYSTORE_PASSWORD = new Value<>(TC_TLS_KEYSTORE_PASSWORD, STRING, "");
+    /** The endpoint identification algorithm used by clients to validate server host name. The default value is https. Clients including client connections created by the broker for inter-broker communication verify that the broker host name matches the host name in the broker’s certificate. Disable server host name verification by setting to an empty string.**/
+    public static final Value<String> TLS_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM = new Value<>(TC_TLS_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM, STRING, "HTTPS");
 
     static {
         Map<String, Value<?>> configValues = CONFIG_VALUES;
@@ -164,11 +171,13 @@ public class Config {
         addConfigValue(configValues, REASSIGN_THROTTLE);
         addConfigValue(configValues, REASSIGN_VERIFY_INTERVAL_MS);
         addConfigValue(configValues, TOPIC_METADATA_MAX_ATTEMPTS);
+        addConfigValue(configValues, TOPICS_PATH);
         addConfigValue(configValues, TLS_ENABLED);
         addConfigValue(configValues, TLS_TRUSTSTORE_LOCATION);
         addConfigValue(configValues, TLS_TRUSTSTORE_PASSWORD);
         addConfigValue(configValues, TLS_KEYSTORE_LOCATION);
         addConfigValue(configValues, TLS_KEYSTORE_PASSWORD);
+        addConfigValue(configValues, TLS_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM);
     }
 
     static void addConfigValue(Map<String, Value<?>> configValues, Value<?> cv) {

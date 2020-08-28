@@ -6,7 +6,10 @@ package io.strimzi.operator.cluster.model;
 
 import io.fabric8.kubernetes.api.model.VolumeMount;
 import io.strimzi.api.kafka.model.CertAndKeySecretSource;
+import io.strimzi.api.kafka.model.CruiseControlSpec;
 import io.strimzi.api.kafka.model.KafkaAuthorization;
+import io.strimzi.api.kafka.model.KafkaAuthorizationKeycloak;
+import io.strimzi.api.kafka.model.KafkaAuthorizationOpa;
 import io.strimzi.api.kafka.model.KafkaAuthorizationSimple;
 import io.strimzi.api.kafka.model.KafkaResources;
 import io.strimzi.api.kafka.model.Rack;
@@ -24,6 +27,7 @@ import io.strimzi.kafka.oauth.server.ServerConfig;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -55,11 +59,50 @@ public class KafkaBrokerConfigurationBuilder {
     public KafkaBrokerConfigurationBuilder withBrokerId()   {
         printSectionHeader("Broker ID");
         writer.println("broker.id=${STRIMZI_BROKER_ID}");
+
         writer.println();
 
         return this;
     }
 
+    /**
+     * Configures the Cruise Control metric reporter. It is set only if user enabled the Cruise Control.
+     *
+     * @param clusterName Name of the cluster
+     * @param cruiseControl The Cruise Control configuration from the Kafka CR
+     * @param numPartitions The number of partitions specified in the Kafka config
+     * @param replicationFactor The replication factor specified in the Kafka config
+     *
+     * @return Returns the builder instance
+     */
+    public KafkaBrokerConfigurationBuilder withCruiseControl(String clusterName, CruiseControlSpec cruiseControl, String numPartitions, String replicationFactor)   {
+        if (cruiseControl != null) {
+            printSectionHeader("Cruise Control configuration");
+            writer.println("cruise.control.metrics.topic=strimzi.cruisecontrol.metrics");
+            writer.println("cruise.control.metrics.reporter.ssl.endpoint.identification.algorithm=HTTPS");
+            // using the brokers service because the Admin client, in the Cruise Control metrics reporter, is not able to connect
+            // to the pods behind the bootstrap one when they are not ready during startup.
+            writer.println("cruise.control.metrics.reporter.bootstrap.servers=" + KafkaResources.brokersServiceName(clusterName) + ":9091");
+            writer.println("cruise.control.metrics.reporter.security.protocol=SSL");
+            writer.println("cruise.control.metrics.reporter.ssl.keystore.type=PKCS12");
+            writer.println("cruise.control.metrics.reporter.ssl.keystore.location=/tmp/kafka/cluster.keystore.p12");
+            writer.println("cruise.control.metrics.reporter.ssl.keystore.password=${CERTS_STORE_PASSWORD}");
+            writer.println("cruise.control.metrics.reporter.ssl.truststore.type=PKCS12");
+            writer.println("cruise.control.metrics.reporter.ssl.truststore.location=/tmp/kafka/cluster.truststore.p12");
+            writer.println("cruise.control.metrics.reporter.ssl.truststore.password=${CERTS_STORE_PASSWORD}");
+            writer.println("cruise.control.metrics.topic.auto.create=true");
+            writer.println("cruise.control.metrics.reporter.kubernetes.mode=true");
+            if (numPartitions != null) {
+                writer.println("cruise.control.metrics.topic.num.partitions=" + numPartitions);
+            }
+            if (replicationFactor != null) {
+                writer.println("cruise.control.metrics.topic.replication.factor=" + replicationFactor);
+            }
+            writer.println();
+        }
+
+        return this;
+    }
     /**
      * Adds the template for the {@code rack.id}. The rack ID will be set in the container based on the value of the
      * {@code STRIMZI_RACK_ID} env var. It is set only if user enabled the rack awareness-
@@ -71,7 +114,7 @@ public class KafkaBrokerConfigurationBuilder {
     public KafkaBrokerConfigurationBuilder withRackId(Rack rack)   {
         if (rack != null) {
             printSectionHeader("Rack ID");
-            writer.println("rack.id=${STRIMZI_RACK_ID}");
+            writer.println("broker.rack=${STRIMZI_RACK_ID}");
             writer.println();
         }
 
@@ -81,11 +124,21 @@ public class KafkaBrokerConfigurationBuilder {
     /**
      * Configures the Zookeeper connection URL.
      *
+     * @param clusterName The name of the Kafka custom resource
+     *
      * @return Returns the builder instance
      */
-    public KafkaBrokerConfigurationBuilder withZookeeper()  {
+    public KafkaBrokerConfigurationBuilder withZookeeper(String clusterName)  {
         printSectionHeader("Zookeeper");
-        writer.println("zookeeper.connect=localhost:2181");
+        writer.println(String.format("zookeeper.connect=%s:%d", ZookeeperCluster.serviceName(clusterName), ZookeeperCluster.CLIENT_TLS_PORT));
+        writer.println("zookeeper.clientCnxnSocket=org.apache.zookeeper.ClientCnxnSocketNetty");
+        writer.println("zookeeper.ssl.client.enable=true");
+        writer.println("zookeeper.ssl.keystore.location=/tmp/kafka/cluster.keystore.p12");
+        writer.println("zookeeper.ssl.keystore.password=${CERTS_STORE_PASSWORD}");
+        writer.println("zookeeper.ssl.keystore.type=PKCS12");
+        writer.println("zookeeper.ssl.truststore.location=/tmp/kafka/cluster.truststore.p12");
+        writer.println("zookeeper.ssl.truststore.password=${CERTS_STORE_PASSWORD}");
+        writer.println("zookeeper.ssl.truststore.type=PKCS12");
         writer.println();
 
         return this;
@@ -94,9 +147,9 @@ public class KafkaBrokerConfigurationBuilder {
     /**
      * Configures the listeners based on the listeners enabled by the users in the Kafka CR.
      *
-     * @param clusterName   Name of the cluster (important for the advertised hostnames)
-     * @param namespace Namespace (important for generating the advertised hostname)
-     * @param kafkaListeners    The listeners configuration from the Kafka CR
+     * @param clusterName     Name of the cluster (important for the advertised hostnames)
+     * @param namespace       Namespace (important for generating the advertised hostname)
+     * @param kafkaListeners  The listeners configuration from the Kafka CR
      *
      * @return  Returns the builder instance
      */
@@ -107,7 +160,12 @@ public class KafkaBrokerConfigurationBuilder {
 
         // Replication listener
         listeners.add("REPLICATION-9091://0.0.0.0:9091");
-        advertisedListeners.add(String.format("REPLICATION-9091://%s-${STRIMZI_BROKER_ID}.%s-brokers.%s.svc:9091", KafkaResources.kafkaStatefulSetName(clusterName), KafkaResources.kafkaStatefulSetName(clusterName), namespace));
+        advertisedListeners.add(String.format("REPLICATION-9091://%s:9091",
+                ModelUtils.podDnsNameWithoutClusterDomain(namespace,
+                        KafkaResources.brokersServiceName(clusterName),
+                        // Pod name constructed to be templatable for each individual ordinal
+                        KafkaResources.kafkaStatefulSetName(clusterName) + "-${STRIMZI_BROKER_ID}")
+        ));
         securityProtocol.add("REPLICATION-9091:SSL");
         configureReplicationListener();
 
@@ -244,7 +302,13 @@ public class KafkaBrokerConfigurationBuilder {
      * @return  String with advertised listener configuration
      */
     private String getAdvertisedListener(String clusterName, String namespace, String listenerName, int port)    {
-        return String.format("%s://%s-${STRIMZI_BROKER_ID}.%s-brokers.%s.svc:%d", listenerName, KafkaResources.kafkaStatefulSetName(clusterName), KafkaResources.kafkaStatefulSetName(clusterName), namespace, port);
+        return String.format("%s://%s:%d",
+                listenerName,
+                ModelUtils.podDnsNameWithoutClusterDomain(namespace,
+                        KafkaResources.brokersServiceName(clusterName),
+                        // Pod name constructed to be templatable for each individual ordinal
+                        KafkaResources.kafkaStatefulSetName(clusterName) + "-${STRIMZI_BROKER_ID}"),
+                port);
     }
 
     /**
@@ -301,6 +365,11 @@ public class KafkaBrokerConfigurationBuilder {
             writer.println(String.format("listener.name.%s.oauthbearer.sasl.server.callback.handler.class=io.strimzi.kafka.oauth.server.JaasServerOauthValidatorCallbackHandler", listenerNameInProperty));
             writer.println(String.format("listener.name.%s.oauthbearer.sasl.jaas.config=org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required unsecuredLoginStringClaim_sub=\"thePrincipalName\" %s;", listenerNameInProperty, String.join(" ", options)));
             writer.println(String.format("listener.name.%s.sasl.enabled.mechanisms=OAUTHBEARER", listenerNameInProperty));
+
+            if (oauth.getMaxSecondsWithoutReauthentication() != null) {
+                writer.println(String.format("listener.name.%s.connections.max.reauth.ms=%s", listenerNameInProperty, 1000 * oauth.getMaxSecondsWithoutReauthentication()));
+            }
+
             writer.println();
         } else if (auth instanceof KafkaListenerAuthenticationScramSha512) {
             securityProtocol.add(String.format("%s:%s", listenerName, getSecurityProtocol(tls, true)));
@@ -344,18 +413,50 @@ public class KafkaBrokerConfigurationBuilder {
     /*test*/ static List<String> getOAuthOptions(KafkaListenerAuthenticationOAuth oauth)  {
         List<String> options = new ArrayList<>(5);
 
-        if (oauth.getClientId() != null) options.add(String.format("%s=\"%s\"", ServerConfig.OAUTH_CLIENT_ID, oauth.getClientId()));
-        if (oauth.getValidIssuerUri() != null) options.add(String.format("%s=\"%s\"", ServerConfig.OAUTH_VALID_ISSUER_URI, oauth.getValidIssuerUri()));
-        if (oauth.getJwksEndpointUri() != null) options.add(String.format("%s=\"%s\"", ServerConfig.OAUTH_JWKS_ENDPOINT_URI, oauth.getJwksEndpointUri()));
-        if (oauth.getJwksRefreshSeconds() > 0) options.add(String.format("%s=\"%d\"", ServerConfig.OAUTH_JWKS_REFRESH_SECONDS, oauth.getJwksRefreshSeconds()));
-        if (oauth.getJwksExpirySeconds() > 0) options.add(String.format("%s=\"%d\"", ServerConfig.OAUTH_JWKS_EXPIRY_SECONDS, oauth.getJwksExpirySeconds()));
-        if (oauth.getIntrospectionEndpointUri() != null) options.add(String.format("%s=\"%s\"", ServerConfig.OAUTH_INTROSPECTION_ENDPOINT_URI, oauth.getIntrospectionEndpointUri()));
-        if (oauth.getUserNameClaim() != null) options.add(String.format("%s=\"%s\"", ServerConfig.OAUTH_USERNAME_CLAIM, oauth.getUserNameClaim()));
-        if (!oauth.isAccessTokenIsJwt()) options.add(String.format("%s=\"%s\"", ServerConfig.OAUTH_TOKENS_NOT_JWT, true));
-        if (!oauth.isCheckAccessTokenType()) options.add(String.format("%s=\"%s\"", ServerConfig.OAUTH_VALIDATION_SKIP_TYPE_CHECK, true));
-        if (oauth.isDisableTlsHostnameVerification()) options.add(String.format("%s=\"%s\"", ServerConfig.OAUTH_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM, ""));
+        addOption(options, ServerConfig.OAUTH_CLIENT_ID, oauth.getClientId());
+        addOption(options, ServerConfig.OAUTH_VALID_ISSUER_URI, oauth.getValidIssuerUri());
+        addBooleanOptionIfFalse(options, ServerConfig.OAUTH_CHECK_ISSUER, oauth.isCheckIssuer());
+        addOption(options, ServerConfig.OAUTH_JWKS_ENDPOINT_URI, oauth.getJwksEndpointUri());
+        if (oauth.getJwksRefreshSeconds() != null && oauth.getJwksRefreshSeconds() > 0) {
+            addOption(options, ServerConfig.OAUTH_JWKS_REFRESH_SECONDS, String.valueOf(oauth.getJwksRefreshSeconds()));
+        }
+        if (oauth.getJwksRefreshSeconds() != null && oauth.getJwksExpirySeconds() > 0) {
+            addOption(options, ServerConfig.OAUTH_JWKS_EXPIRY_SECONDS, String.valueOf(oauth.getJwksExpirySeconds()));
+        }
+        if (oauth.getJwksMinRefreshPauseSeconds() != null && oauth.getJwksMinRefreshPauseSeconds() >= 0) {
+            addOption(options, ServerConfig.OAUTH_JWKS_REFRESH_MIN_PAUSE_SECONDS, String.valueOf(oauth.getJwksMinRefreshPauseSeconds()));
+        }
+        addBooleanOptionIfTrue(options, ServerConfig.OAUTH_CRYPTO_PROVIDER_BOUNCYCASTLE, oauth.isEnableECDSA());
+        addOption(options, ServerConfig.OAUTH_INTROSPECTION_ENDPOINT_URI, oauth.getIntrospectionEndpointUri());
+        addOption(options, ServerConfig.OAUTH_USERINFO_ENDPOINT_URI, oauth.getUserInfoEndpointUri());
+        addOption(options, ServerConfig.OAUTH_USERNAME_CLAIM, oauth.getUserNameClaim());
+        addOption(options, ServerConfig.OAUTH_FALLBACK_USERNAME_CLAIM, oauth.getFallbackUserNameClaim());
+        addOption(options, ServerConfig.OAUTH_FALLBACK_USERNAME_PREFIX, oauth.getFallbackUserNamePrefix());
+        addBooleanOptionIfFalse(options, ServerConfig.OAUTH_ACCESS_TOKEN_IS_JWT, oauth.isAccessTokenIsJwt());
+        addBooleanOptionIfFalse(options, ServerConfig.OAUTH_CHECK_ACCESS_TOKEN_TYPE, oauth.isCheckAccessTokenType());
+        addOption(options, ServerConfig.OAUTH_VALID_TOKEN_TYPE, oauth.getValidTokenType());
+
+        if (oauth.isDisableTlsHostnameVerification()) {
+            addOption(options, ServerConfig.OAUTH_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM, "");
+        }
 
         return options;
+    }
+
+    static void addOption(List<String> options, String option, String value) {
+        if (value != null) options.add(String.format("%s=\"%s\"", option, value));
+    }
+
+    static void addBooleanOptionIfTrue(List<String> options, String option, boolean value) {
+        if (value) options.add(String.format("%s=\"%s\"", option, value));
+    }
+
+    static void addBooleanOptionIfFalse(List<String> options, String option, boolean value) {
+        if (!value) options.add(String.format("%s=\"%s\"", option, value));
+    }
+
+    static void addOption(PrintWriter writer, String name, Object value) {
+        if (value != null) writer.println(name + "=" + value);
     }
 
     /**
@@ -369,30 +470,79 @@ public class KafkaBrokerConfigurationBuilder {
     public KafkaBrokerConfigurationBuilder withAuthorization(String clusterName, KafkaAuthorization authorization)  {
         if (authorization != null) {
             List<String> superUsers = new ArrayList<>();
-            String authorizerClass = "";
 
             // Broker super users
             superUsers.add(String.format("User:CN=%s,O=io.strimzi", KafkaResources.kafkaStatefulSetName(clusterName)));
             superUsers.add(String.format("User:CN=%s-%s,O=io.strimzi", clusterName, "entity-operator"));
             superUsers.add(String.format("User:CN=%s-%s,O=io.strimzi", clusterName, "kafka-exporter"));
+            superUsers.add(String.format("User:CN=%s-%s,O=io.strimzi", clusterName, "cruise-control"));
 
-            // User configured super users
-            if (KafkaAuthorizationSimple.TYPE_SIMPLE.equals(authorization.getType())) {
-                KafkaAuthorizationSimple simpleAuthz = (KafkaAuthorizationSimple) authorization;
-                authorizerClass = KafkaAuthorizationSimple.AUTHORIZER_CLASS_NAME;
-
-                if (simpleAuthz.getSuperUsers() != null && simpleAuthz.getSuperUsers().size() > 0) {
-                    superUsers.addAll(simpleAuthz.getSuperUsers().stream().map(e -> String.format("User:%s", e)).collect(Collectors.toList()));
-                }
-            }
+            superUsers.add(String.format("User:CN=%s,O=io.strimzi", "cluster-operator"));
 
             printSectionHeader("Authorization");
-            writer.println("authorizer.class.name=" + authorizerClass);
+            configureAuthorization(clusterName, superUsers, authorization);
             writer.println("super.users=" + String.join(";", superUsers));
             writer.println();
         }
 
         return this;
+    }
+
+    /**
+     * Configures authorization for the Kafka brokers. This method is used only internally.
+     *
+     * @param clusterName Name of the cluster
+     * @param superUsers Super users list who have all the rights on the cluster
+     * @param authorization The authorization configuration from the Kafka CR
+     */
+    private void configureAuthorization(String clusterName, List<String> superUsers, KafkaAuthorization authorization) {
+        if (KafkaAuthorizationSimple.TYPE_SIMPLE.equals(authorization.getType())) {
+            KafkaAuthorizationSimple simpleAuthz = (KafkaAuthorizationSimple) authorization;
+            writer.println("authorizer.class.name=" + KafkaAuthorizationSimple.AUTHORIZER_CLASS_NAME);
+
+            // User configured super users
+            if (simpleAuthz.getSuperUsers() != null && simpleAuthz.getSuperUsers().size() > 0) {
+                superUsers.addAll(simpleAuthz.getSuperUsers().stream().map(e -> String.format("User:%s", e)).collect(Collectors.toList()));
+            }
+        } else if (KafkaAuthorizationOpa.TYPE_OPA.equals(authorization.getType())) {
+            KafkaAuthorizationOpa opaAuthz = (KafkaAuthorizationOpa) authorization;
+            writer.println("authorizer.class.name=" + KafkaAuthorizationOpa.AUTHORIZER_CLASS_NAME);
+
+            writer.println(String.format("%s=%s", "opa.authorizer.url", opaAuthz.getUrl()));
+            writer.println(String.format("%s=%b", "opa.authorizer.allow.on.error", opaAuthz.isAllowOnError()));
+            writer.println(String.format("%s=%d", "opa.authorizer.cache.initial.capacity", opaAuthz.getInitialCacheCapacity()));
+            writer.println(String.format("%s=%d", "opa.authorizer.cache.maximum.size", opaAuthz.getMaximumCacheSize()));
+            writer.println(String.format("%s=%d", "opa.authorizer.cache.expire.after.seconds", Duration.ofMillis(opaAuthz.getExpireAfterMs()).getSeconds()));
+
+            // User configured super users
+            if (opaAuthz.getSuperUsers() != null && opaAuthz.getSuperUsers().size() > 0) {
+                superUsers.addAll(opaAuthz.getSuperUsers().stream().map(e -> String.format("User:%s", e)).collect(Collectors.toList()));
+            }
+        } else if (KafkaAuthorizationKeycloak.TYPE_KEYCLOAK.equals(authorization.getType())) {
+            KafkaAuthorizationKeycloak keycloakAuthz = (KafkaAuthorizationKeycloak) authorization;
+            writer.println("authorizer.class.name=" + KafkaAuthorizationKeycloak.AUTHORIZER_CLASS_NAME);
+            writer.println("principal.builder.class=" + KafkaAuthorizationKeycloak.PRINCIPAL_BUILDER_CLASS_NAME);
+            writer.println("strimzi.authorization.token.endpoint.uri=" + keycloakAuthz.getTokenEndpointUri());
+            writer.println("strimzi.authorization.client.id=" + keycloakAuthz.getClientId());
+            writer.println("strimzi.authorization.delegate.to.kafka.acl=" + keycloakAuthz.isDelegateToKafkaAcls());
+            addOption(writer, "strimzi.authorization.grants.refresh.period.seconds", keycloakAuthz.getGrantsRefreshPeriodSeconds());
+            addOption(writer, "strimzi.authorization.grants.refresh.pool.size", keycloakAuthz.getGrantsRefreshPoolSize());
+            writer.println("strimzi.authorization.kafka.cluster.name=" + clusterName);
+
+            if (keycloakAuthz.getTlsTrustedCertificates() != null && keycloakAuthz.getTlsTrustedCertificates().size() > 0)    {
+                writer.println("strimzi.authorization.ssl.truststore.location=/tmp/kafka/authz-keycloak.truststore.p12");
+                writer.println("strimzi.authorization.ssl.truststore.password=${CERTS_STORE_PASSWORD}");
+                writer.println("strimzi.authorization.ssl.truststore.type=PKCS12");
+                writer.println("strimzi.authorization.ssl.secure.random.implementation=SHA1PRNG");
+                String endpointIdentificationAlgorithm = keycloakAuthz.isDisableTlsHostnameVerification() ? "" : "HTTPS";
+                writer.println("strimzi.authorization.ssl.endpoint.identification.algorithm=" + endpointIdentificationAlgorithm);
+            }
+
+            // User configured super users
+            if (keycloakAuthz.getSuperUsers() != null && keycloakAuthz.getSuperUsers().size() > 0) {
+                superUsers.addAll(keycloakAuthz.getSuperUsers().stream().map(e -> String.format("User:%s", e)).collect(Collectors.toList()));
+            }
+        }
     }
 
     /**

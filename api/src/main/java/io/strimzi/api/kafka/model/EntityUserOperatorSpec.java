@@ -8,6 +8,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import io.fabric8.kubernetes.api.model.ResourceRequirements;
 import io.strimzi.crdgenerator.annotations.Description;
+import io.strimzi.crdgenerator.annotations.KubeLink;
 import io.strimzi.crdgenerator.annotations.Minimum;
 import io.sundr.builder.annotations.Buildable;
 import lombok.EqualsAndHashCode;
@@ -21,8 +22,7 @@ import java.util.Map;
  */
 @Buildable(
         editableEnabled = false,
-        generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder"
+        builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonPropertyOrder({"watchedNamespace", "image",
@@ -37,6 +37,7 @@ public class EntityUserOperatorSpec implements UnknownPropertyPreserving, Serial
     public static final int DEFAULT_HEALTHCHECK_DELAY = 10;
     public static final int DEFAULT_HEALTHCHECK_TIMEOUT = 5;
     public static final int DEFAULT_ZOOKEEPER_PORT = 2181;
+    public static final int DEFAULT_BOOTSTRAP_SERVERS_PORT = 9091;
     public static final long DEFAULT_FULL_RECONCILIATION_INTERVAL_SECONDS = 120;
     public static final long DEFAULT_ZOOKEEPER_SESSION_TIMEOUT_SECONDS = 6;
 
@@ -48,7 +49,7 @@ public class EntityUserOperatorSpec implements UnknownPropertyPreserving, Serial
     private Probe readinessProbe;
     private ResourceRequirements resources;
     private Logging logging;
-    private EntityOperatorJvmOptions jvmOptions;
+    private JvmOptions jvmOptions;
     private Map<String, Object> additionalProperties = new HashMap<>(0);
 
     @Description("The namespace the User Operator should watch.")
@@ -90,6 +91,7 @@ public class EntityUserOperatorSpec implements UnknownPropertyPreserving, Serial
     }
 
     @Description("CPU and memory resources to reserve.")
+    @KubeLink(group = "core", version = "v1", kind = "resourcerequirements")
     public ResourceRequirements getResources() {
         return resources;
     }
@@ -140,11 +142,11 @@ public class EntityUserOperatorSpec implements UnknownPropertyPreserving, Serial
 
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
     @Description("JVM Options for pods")
-    public EntityOperatorJvmOptions getJvmOptions() {
+    public JvmOptions getJvmOptions() {
         return jvmOptions;
     }
 
-    public void setJvmOptions(EntityOperatorJvmOptions jvmOptions) {
+    public void setJvmOptions(JvmOptions jvmOptions) {
         this.jvmOptions = jvmOptions;
     }
 }

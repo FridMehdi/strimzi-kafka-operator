@@ -6,6 +6,7 @@ package io.strimzi.api.kafka.model.status;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import io.strimzi.api.kafka.model.Constants;
 import io.strimzi.crdgenerator.annotations.Description;
 import io.sundr.builder.annotations.Buildable;
 import lombok.EqualsAndHashCode;
@@ -18,8 +19,7 @@ import java.util.Map;
  */
 @Buildable(
         editableEnabled = false,
-        generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder"
+        builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonPropertyOrder({ "conditions", "observedGeneration", "url" })
@@ -29,6 +29,7 @@ public class KafkaConnectorStatus extends Status {
     private static final long serialVersionUID = 1L;
 
     private Map<String, Object> connectorStatus;
+    private int tasksMax;
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     @Description("The connector status, as reported by the Kafka Connect REST API.")
@@ -38,5 +39,15 @@ public class KafkaConnectorStatus extends Status {
 
     public void setConnectorStatus(Map<String, Object> connectorStatus) {
         this.connectorStatus = connectorStatus;
+    }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @Description("The maximum number of tasks for the Kafka Connector.")
+    public int getTasksMax() {
+        return tasksMax;
+    }
+
+    public void setTasksMax(int tasksMax) {
+        this.tasksMax = tasksMax;
     }
 }

@@ -25,9 +25,9 @@ public class ClusterCa extends Ca {
 
     private final String clusterName;
     private Secret entityOperatorSecret;
-    private Secret topicOperatorSecret;
     private Secret clusterOperatorSecret;
     private Secret kafkaExporterSecret;
+    private Secret cruiseControlSecret;
 
     private Secret brokersSecret;
     private Secret zkNodesSecret;
@@ -87,20 +87,16 @@ public class ClusterCa extends Ca {
                 brokersSecret = secret;
             } else if (EntityOperator.secretName(clusterName).equals(name)) {
                 entityOperatorSecret = secret;
-            } else if (TopicOperator.secretName(clusterName).equals(name)) {
-                topicOperatorSecret = secret;
             } else if (ZookeeperCluster.nodesSecretName(clusterName).equals(name)) {
                 zkNodesSecret = secret;
             } else if (ClusterOperator.secretName(clusterName).equals(name)) {
                 clusterOperatorSecret = secret;
             } else if (KafkaExporter.secretName(clusterName).equals(name)) {
                 kafkaExporterSecret = secret;
+            } else if (CruiseControl.secretName(clusterName).equals(name)) {
+                cruiseControlSecret = secret;
             }
         }
-    }
-
-    public Secret topicOperatorSecret() {
-        return topicOperatorSecret;
     }
 
     public Secret entityOperatorSecret() {
@@ -115,16 +111,25 @@ public class ClusterCa extends Ca {
         return kafkaExporterSecret;
     }
 
+    public Secret cruiseControlSecret() {
+        return cruiseControlSecret;
+    }
+
     public Map<String, CertAndKey> generateZkCerts(Kafka kafka, boolean isMaintenanceTimeWindowsSatisfied) throws IOException {
         String cluster = kafka.getMetadata().getName();
         String namespace = kafka.getMetadata().getNamespace();
         Function<Integer, Subject> subjectFn = i -> {
-            Map<String, String> sbjAltNames = new HashMap<>();
+            Map<String, String> sbjAltNames = new HashMap<>(6);
             sbjAltNames.put("DNS.1", ZookeeperCluster.serviceName(cluster));
             sbjAltNames.put("DNS.2", String.format("%s.%s", ZookeeperCluster.serviceName(cluster), namespace));
-            sbjAltNames.put("DNS.3", String.format("%s.%s.svc", ZookeeperCluster.serviceName(cluster), namespace));
-            sbjAltNames.put("DNS.4", String.format("%s.%s.svc.%s", ZookeeperCluster.serviceName(cluster), namespace, ModelUtils.KUBERNETES_SERVICE_DNS_DOMAIN));
+            sbjAltNames.put("DNS.3", ModelUtils.serviceDnsNameWithoutClusterDomain(namespace, ZookeeperCluster.serviceName(cluster)));
+            sbjAltNames.put("DNS.4", ModelUtils.serviceDnsName(namespace, ZookeeperCluster.serviceName(cluster)));
             sbjAltNames.put("DNS.5", ZookeeperCluster.podDnsName(namespace, cluster, i));
+            sbjAltNames.put("DNS.6", ZookeeperCluster.podDnsNameWithoutSuffix(namespace, cluster, i));
+            sbjAltNames.put("DNS.7", ModelUtils.wildcardServiceDnsNameWithoutClusterDomain(namespace, ZookeeperCluster.serviceName(cluster)));
+            sbjAltNames.put("DNS.8", ModelUtils.wildcardServiceDnsName(namespace, ZookeeperCluster.serviceName(cluster)));
+            sbjAltNames.put("DNS.9", ModelUtils.wildcardServiceDnsNameWithoutClusterDomain(namespace, ZookeeperCluster.headlessServiceName(cluster)));
+            sbjAltNames.put("DNS.10", ModelUtils.wildcardServiceDnsName(namespace, ZookeeperCluster.headlessServiceName(cluster)));
 
             Subject subject = new Subject();
             subject.setOrganizationName("io.strimzi");
@@ -151,14 +156,14 @@ public class ClusterCa extends Ca {
             Map<String, String> sbjAltNames = new HashMap<>();
             sbjAltNames.put("DNS.1", KafkaCluster.serviceName(cluster));
             sbjAltNames.put("DNS.2", String.format("%s.%s", KafkaCluster.serviceName(cluster), namespace));
-            sbjAltNames.put("DNS.3", String.format("%s.%s.svc", KafkaCluster.serviceName(cluster), namespace));
-            sbjAltNames.put("DNS.4", String.format("%s.%s.svc.%s", KafkaCluster.serviceName(cluster), namespace, ModelUtils.KUBERNETES_SERVICE_DNS_DOMAIN));
+            sbjAltNames.put("DNS.3", ModelUtils.serviceDnsNameWithoutClusterDomain(namespace, KafkaCluster.serviceName(cluster)));
+            sbjAltNames.put("DNS.4", ModelUtils.serviceDnsName(namespace, KafkaCluster.serviceName(cluster)));
             sbjAltNames.put("DNS.5", KafkaCluster.headlessServiceName(cluster));
             sbjAltNames.put("DNS.6", String.format("%s.%s", KafkaCluster.headlessServiceName(cluster), namespace));
-            sbjAltNames.put("DNS.7", String.format("%s.%s.svc", KafkaCluster.headlessServiceName(cluster), namespace));
-            sbjAltNames.put("DNS.8", String.format("%s.%s.svc.%s", KafkaCluster.headlessServiceName(cluster), namespace, ModelUtils.KUBERNETES_SERVICE_DNS_DOMAIN));
+            sbjAltNames.put("DNS.7", ModelUtils.serviceDnsNameWithoutClusterDomain(namespace, KafkaCluster.headlessServiceName(cluster)));
+            sbjAltNames.put("DNS.8", ModelUtils.serviceDnsName(namespace, KafkaCluster.headlessServiceName(cluster)));
             sbjAltNames.put("DNS.9", KafkaCluster.podDnsName(namespace, cluster, i));
-            sbjAltNames.put("DNS.10", KafkaCluster.podDnsNameWithoutSuffix(namespace, cluster, i));
+            sbjAltNames.put("DNS.10", KafkaCluster.podDnsNameWithoutClusterDomain(namespace, cluster, i));
             int nextDnsId = 11;
             int nextIpId = 1;
 

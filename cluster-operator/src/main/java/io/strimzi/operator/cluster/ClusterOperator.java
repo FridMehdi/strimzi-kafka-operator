@@ -4,7 +4,6 @@
  */
 package io.strimzi.operator.cluster;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.Watch;
 import io.strimzi.operator.cluster.operator.assembly.AbstractConnectOperator;
@@ -13,7 +12,10 @@ import io.strimzi.operator.cluster.operator.assembly.KafkaBridgeAssemblyOperator
 import io.strimzi.operator.cluster.operator.assembly.KafkaConnectAssemblyOperator;
 import io.strimzi.operator.cluster.operator.assembly.KafkaConnectS2IAssemblyOperator;
 import io.strimzi.operator.cluster.operator.assembly.KafkaMirrorMakerAssemblyOperator;
+import io.strimzi.operator.cluster.operator.assembly.KafkaRebalanceAssemblyOperator;
 import io.strimzi.operator.common.AbstractOperator;
+import io.strimzi.operator.cluster.operator.assembly.KafkaMirrorMaker2AssemblyOperator;
+import io.strimzi.operator.common.MetricsProvider;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.CompositeFuture;
@@ -21,7 +23,6 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Promise;
 import io.vertx.core.http.HttpServer;
-import io.vertx.micrometer.backends.BackendRegistries;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -33,11 +34,6 @@ import java.util.concurrent.TimeUnit;
 
 import static java.util.Arrays.asList;
 import io.micrometer.prometheus.PrometheusMeterRegistry;
-import io.micrometer.core.instrument.binder.jvm.ClassLoaderMetrics;
-import io.micrometer.core.instrument.binder.jvm.JvmMemoryMetrics;
-import io.micrometer.core.instrument.binder.jvm.JvmGcMetrics;
-import io.micrometer.core.instrument.binder.system.ProcessorMetrics;
-import io.micrometer.core.instrument.binder.jvm.JvmThreadMetrics;
 
 /**
  * An "operator" for managing assemblies of various types <em>in a particular namespace</em>.
@@ -54,7 +50,7 @@ public class ClusterOperator extends AbstractVerticle {
 
     private static final int HEALTH_SERVER_PORT = 8080;
 
-    private final PrometheusMeterRegistry metrics;
+    private final MetricsProvider metricsProvider;
 
     private final KubernetesClient client;
     private final String namespace;
@@ -67,7 +63,9 @@ public class ClusterOperator extends AbstractVerticle {
     private final KafkaConnectAssemblyOperator kafkaConnectAssemblyOperator;
     private final KafkaConnectS2IAssemblyOperator kafkaConnectS2IAssemblyOperator;
     private final KafkaMirrorMakerAssemblyOperator kafkaMirrorMakerAssemblyOperator;
+    private final KafkaMirrorMaker2AssemblyOperator kafkaMirrorMaker2AssemblyOperator;
     private final KafkaBridgeAssemblyOperator kafkaBridgeAssemblyOperator;
+    private final KafkaRebalanceAssemblyOperator kafkaRebalanceAssemblyOperator;
 
     public ClusterOperator(String namespace,
                            long reconciliationInterval,
@@ -76,7 +74,10 @@ public class ClusterOperator extends AbstractVerticle {
                            KafkaConnectAssemblyOperator kafkaConnectAssemblyOperator,
                            KafkaConnectS2IAssemblyOperator kafkaConnectS2IAssemblyOperator,
                            KafkaMirrorMakerAssemblyOperator kafkaMirrorMakerAssemblyOperator,
-                           KafkaBridgeAssemblyOperator kafkaBridgeAssemblyOperator) {
+                           KafkaMirrorMaker2AssemblyOperator kafkaMirrorMaker2AssemblyOperator,
+                           KafkaBridgeAssemblyOperator kafkaBridgeAssemblyOperator,
+                           KafkaRebalanceAssemblyOperator kafkaRebalanceAssemblyOperator,
+                           MetricsProvider metricsProvider) {
         log.info("Creating ClusterOperator for namespace {}", namespace);
         this.namespace = namespace;
         this.reconciliationInterval = reconciliationInterval;
@@ -85,23 +86,24 @@ public class ClusterOperator extends AbstractVerticle {
         this.kafkaConnectAssemblyOperator = kafkaConnectAssemblyOperator;
         this.kafkaConnectS2IAssemblyOperator = kafkaConnectS2IAssemblyOperator;
         this.kafkaMirrorMakerAssemblyOperator = kafkaMirrorMakerAssemblyOperator;
+        this.kafkaMirrorMaker2AssemblyOperator = kafkaMirrorMaker2AssemblyOperator;
         this.kafkaBridgeAssemblyOperator = kafkaBridgeAssemblyOperator;
+        this.kafkaRebalanceAssemblyOperator = kafkaRebalanceAssemblyOperator;
 
-        metrics = (PrometheusMeterRegistry) BackendRegistries.getDefaultNow();
-        setupMetrics();
+        this.metricsProvider = metricsProvider;
     }
 
     @Override
-    public void start(Future<Void> start) {
+    public void start(Promise<Void> start) {
         log.info("Starting ClusterOperator for namespace {}", namespace);
 
         // Configure the executor here, but it is used only in other places
         getVertx().createSharedWorkerExecutor("kubernetes-ops-pool", 10, TimeUnit.SECONDS.toNanos(120));
 
-        List<Future> watchFutures = new ArrayList<>();
+        List<Future> watchFutures = new ArrayList<>(8);
         List<AbstractOperator<?, ?>> operators = new ArrayList<>(asList(
                 kafkaAssemblyOperator, kafkaMirrorMakerAssemblyOperator,
-                kafkaConnectAssemblyOperator, kafkaBridgeAssemblyOperator));
+                kafkaConnectAssemblyOperator, kafkaBridgeAssemblyOperator, kafkaMirrorMaker2AssemblyOperator));
         if (kafkaConnectS2IAssemblyOperator != null) {
             operators.add(kafkaConnectS2IAssemblyOperator);
         }
@@ -114,6 +116,7 @@ public class ClusterOperator extends AbstractVerticle {
         }
 
         watchFutures.add(AbstractConnectOperator.createConnectorWatch(kafkaConnectAssemblyOperator, kafkaConnectS2IAssemblyOperator, namespace));
+        watchFutures.add(kafkaRebalanceAssemblyOperator.createRebalanceWatch(namespace));
 
         CompositeFuture.join(watchFutures)
                 .compose(f -> {
@@ -124,13 +127,12 @@ public class ClusterOperator extends AbstractVerticle {
                     });
                     return startHealthServer().map((Void) null);
                 })
-                .setHandler(start);
+                .onComplete(start);
     }
 
 
     @Override
-    @SuppressFBWarnings(value = "BC_UNCONFIRMED_CAST")
-    public void stop(Future<Void> stop) {
+    public void stop(Promise<Void> stop) {
         log.info("Stopping ClusterOperator for namespace {}", namespace);
         vertx.cancelTimer(reconcileTimer);
         for (Watch watch : watchByKind.values()) {
@@ -140,7 +142,7 @@ public class ClusterOperator extends AbstractVerticle {
             // TODO remove the watch from the watchByKind
         }
         client.close();
-        ((Promise<Void>) stop).complete();
+        stop.complete();
     }
 
     /**
@@ -151,7 +153,9 @@ public class ClusterOperator extends AbstractVerticle {
         kafkaAssemblyOperator.reconcileAll(trigger, namespace, ignore);
         kafkaMirrorMakerAssemblyOperator.reconcileAll(trigger, namespace, ignore);
         kafkaConnectAssemblyOperator.reconcileAll(trigger, namespace, ignore);
+        kafkaMirrorMaker2AssemblyOperator.reconcileAll(trigger, namespace, ignore);
         kafkaBridgeAssemblyOperator.reconcileAll(trigger, namespace, ignore);
+        kafkaRebalanceAssemblyOperator.reconcileAll(trigger, namespace, ignore);
 
         if (kafkaConnectS2IAssemblyOperator != null) {
             kafkaConnectS2IAssemblyOperator.reconcileAll(trigger, namespace, ignore);
@@ -171,6 +175,7 @@ public class ClusterOperator extends AbstractVerticle {
                     } else if (request.path().equals("/ready")) {
                         request.response().setStatusCode(200).end();
                     } else if (request.path().equals("/metrics")) {
+                        PrometheusMeterRegistry metrics = (PrometheusMeterRegistry) metricsProvider.meterRegistry();
                         request.response().setStatusCode(200)
                                 .end(metrics.scrape());
                     }
@@ -184,14 +189,6 @@ public class ClusterOperator extends AbstractVerticle {
                     result.handle(ar);
                 });
         return result.future();
-    }
-
-    private void setupMetrics() {
-        new ClassLoaderMetrics().bindTo(metrics);
-        new JvmMemoryMetrics().bindTo(metrics);
-        new ProcessorMetrics().bindTo(metrics);
-        new JvmThreadMetrics().bindTo(metrics);
-        new JvmGcMetrics().bindTo(metrics);
     }
 
     public static String secretName(String cluster) {

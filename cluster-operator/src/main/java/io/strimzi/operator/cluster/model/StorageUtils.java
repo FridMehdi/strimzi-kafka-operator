@@ -5,11 +5,28 @@
 package io.strimzi.operator.cluster.model;
 
 import io.fabric8.kubernetes.api.model.Quantity;
+import io.strimzi.api.kafka.model.storage.JbodStorage;
+import io.strimzi.api.kafka.model.storage.Storage;
 
 /**
  * Shared methods for working with Storage - for example comparing volume sizes
  */
 public class StorageUtils {
+    /**
+     * Parse a K8S-style representation of a quantity of memory, such as {@code 512Mi},
+     * into the equivalent number of bytes in the specified units.
+     * For example, a memory value of "100Gb" and a unit value of "Mb" will return 100000,
+     *
+     * @param memory The String representation of the quantity of memory.
+     * @param units The units which the bytes should be returned in. The format of units
+     *              follows the K8S-style representation of memory units.
+     *
+     * @return The equivalent number of bytes in the specified units.
+     */
+    public static double parseMemory(String memory, String units) {
+        return parseMemory(memory) / (double) memoryFactor(units);
+    }
+
     /**
      * Parse a K8S-style representation of a disk size, such as {@code 100Gi},
      * into the equivalent number of bytes represented as a long.
@@ -43,7 +60,7 @@ public class StorageUtils {
             char ch = size.charAt(i);
             if (ch == 'e') {
                 seenE = true;
-            } else if (ch < '0' || '9' < ch) {
+            } else if ((ch < '0' || '9' < ch) && ch != '.') {
                 end = i;
                 factor = memoryFactor(size.substring(i));
                 break;
@@ -53,7 +70,7 @@ public class StorageUtils {
         if (seenE) {
             result = (long) Double.parseDouble(size);
         } else {
-            result = Long.parseLong(size.substring(0, end)) * factor;
+            result = (long) (Double.parseDouble(size.substring(0, end)) * factor);
         }
         return result;
     }
@@ -107,5 +124,31 @@ public class StorageUtils {
                 throw new IllegalArgumentException("Invalid memory suffix: " + suffix);
         }
         return factor;
+    }
+
+
+    private static boolean isEphemeral(Storage storage) {
+        return Storage.TYPE_EPHEMERAL.equals(storage.getType());
+    }
+
+    /**
+     * Helper method to check if the provided storage uses ephemeral storage.
+     * (Either if it is an ephemeral storage volume, or a jbod including at
+     * least one ephemeral volume).
+     *
+     * @param storage volume to check
+     * @return true if it uses ephemeral
+     */
+    public static boolean usesEphemeral(Storage storage) {
+        if (storage != null) {
+            if (isEphemeral(storage)) {
+                return true;
+            }
+            if (Storage.TYPE_JBOD.equals(storage.getType()) && storage instanceof JbodStorage) {
+                JbodStorage jbodStorage = (JbodStorage) storage;
+                return jbodStorage.getVolumes().stream().anyMatch(StorageUtils::isEphemeral);
+            }
+        }
+        return false;
     }
 }

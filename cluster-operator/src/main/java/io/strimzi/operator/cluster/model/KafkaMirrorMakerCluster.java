@@ -9,10 +9,10 @@ import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.ContainerBuilder;
 import io.fabric8.kubernetes.api.model.ContainerPort;
 import io.fabric8.kubernetes.api.model.EnvVar;
+import io.fabric8.kubernetes.api.model.HasMetadata;
 import io.fabric8.kubernetes.api.model.IntOrString;
 import io.fabric8.kubernetes.api.model.LocalObjectReference;
-import io.fabric8.kubernetes.api.model.Service;
-import io.fabric8.kubernetes.api.model.ServicePort;
+import io.fabric8.kubernetes.api.model.SecurityContext;
 import io.fabric8.kubernetes.api.model.Toleration;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeMount;
@@ -33,7 +33,6 @@ import io.strimzi.api.kafka.model.Probe;
 import io.strimzi.api.kafka.model.ProbeBuilder;
 import io.strimzi.api.kafka.model.template.KafkaMirrorMakerTemplate;
 import io.strimzi.api.kafka.model.tracing.Tracing;
-import io.strimzi.operator.common.model.Labels;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -41,6 +40,8 @@ import java.util.List;
 import java.util.Map;
 
 public class KafkaMirrorMakerCluster extends AbstractModel {
+    protected static final String APPLICATION_NAME = "kafka-mirror-maker";
+
     protected static final String TLS_CERTS_VOLUME_MOUNT_CONSUMER = "/opt/kafka/consumer-certs/";
     protected static final String PASSWORD_VOLUME_MOUNT_CONSUMER = "/opt/kafka/consumer-password/";
     protected static final String TLS_CERTS_VOLUME_MOUNT_PRODUCER = "/opt/kafka/producer-certs/";
@@ -49,7 +50,6 @@ public class KafkaMirrorMakerCluster extends AbstractModel {
     protected static final String OAUTH_TLS_CERTS_BASE_VOLUME_MOUNT_PRODUCER = "/opt/kafka/producer-oauth-certs/";
 
     // Configuration defaults
-    protected static final int DEFAULT_REPLICAS = 3;
     private static final int DEFAULT_HEALTHCHECK_DELAY = 60;
     private static final int DEFAULT_HEALTHCHECK_TIMEOUT = 5;
     private static final int DEFAULT_HEALTHCHECK_PERIOD = 10;
@@ -104,20 +104,18 @@ public class KafkaMirrorMakerCluster extends AbstractModel {
     protected KafkaMirrorMakerProducerSpec producer;
     protected KafkaMirrorMakerConsumerSpec consumer;
     protected List<ContainerEnvVar> templateContainerEnvVars;
+    protected SecurityContext templateContainerSecurityContext;
 
     /**
      * Constructor
      *
-     * @param namespace Kubernetes/OpenShift namespace where Kafka Mirror Maker cluster resources are going to be created
-     * @param cluster   overall cluster name
-     * @param labels    labels to add to the cluster
+     * @param resource Kubernetes resource with metadata containing the namespace and cluster name
      */
-    protected KafkaMirrorMakerCluster(String namespace, String cluster, Labels labels) {
-        super(namespace, cluster, labels);
+    protected KafkaMirrorMakerCluster(HasMetadata resource) {
+        super(resource, APPLICATION_NAME);
         this.name = KafkaMirrorMakerResources.deploymentName(cluster);
         this.serviceName = KafkaMirrorMakerResources.serviceName(cluster);
-        this.ancillaryConfigName = KafkaMirrorMakerResources.metricsAndLogConfigMapName(cluster);
-        this.replicas = DEFAULT_REPLICAS;
+        this.ancillaryConfigMapName = KafkaMirrorMakerResources.metricsAndLogConfigMapName(cluster);
         this.readinessPath = "/";
         this.readinessProbeOptions = READINESS_PROBE_OPTIONS;
         this.livenessPath = "/";
@@ -130,13 +128,11 @@ public class KafkaMirrorMakerCluster extends AbstractModel {
     }
 
     public static KafkaMirrorMakerCluster fromCrd(KafkaMirrorMaker kafkaMirrorMaker, KafkaVersion.Lookup versions) {
-        KafkaMirrorMakerCluster kafkaMirrorMakerCluster = new KafkaMirrorMakerCluster(kafkaMirrorMaker.getMetadata().getNamespace(),
-                kafkaMirrorMaker.getMetadata().getName(),
-                Labels.fromResource(kafkaMirrorMaker).withKind(kafkaMirrorMaker.getKind()));
+        KafkaMirrorMakerCluster kafkaMirrorMakerCluster = new KafkaMirrorMakerCluster(kafkaMirrorMaker);
 
         KafkaMirrorMakerSpec spec = kafkaMirrorMaker.getSpec();
-        kafkaMirrorMakerCluster.setReplicas(spec != null && spec.getReplicas() > 0 ? spec.getReplicas() : DEFAULT_REPLICAS);
         if (spec != null) {
+            kafkaMirrorMakerCluster.setReplicas(spec.getReplicas());
             kafkaMirrorMakerCluster.setResources(spec.getResources());
 
             if (spec.getReadinessProbe() != null) {
@@ -158,6 +154,9 @@ public class KafkaMirrorMakerCluster extends AbstractModel {
 
             kafkaMirrorMakerCluster.setLogging(spec.getLogging());
             kafkaMirrorMakerCluster.setGcLoggingEnabled(spec.getJvmOptions() == null ? DEFAULT_JVM_GC_LOGGING_ENABLED : spec.getJvmOptions().isGcLoggingEnabled());
+            if (spec.getJvmOptions() != null) {
+                kafkaMirrorMakerCluster.setJavaSystemProperties(spec.getJvmOptions().getJavaSystemProperties());
+            }
             kafkaMirrorMakerCluster.setJvmOptions(spec.getJvmOptions());
 
             Map<String, Object> metrics = spec.getMetrics();
@@ -181,12 +180,18 @@ public class KafkaMirrorMakerCluster extends AbstractModel {
                     kafkaMirrorMakerCluster.templateContainerEnvVars = template.getMirrorMakerContainer().getEnv();
                 }
 
+                if (template.getMirrorMakerContainer() != null && template.getMirrorMakerContainer().getSecurityContext() != null) {
+                    kafkaMirrorMakerCluster.templateContainerSecurityContext = template.getMirrorMakerContainer().getSecurityContext();
+                }
+
                 ModelUtils.parsePodTemplate(kafkaMirrorMakerCluster, template.getPod());
                 ModelUtils.parsePodDisruptionBudgetTemplate(kafkaMirrorMakerCluster, template.getPodDisruptionBudget());
             }
 
+            // Kafka Mirror Maker needs special treatment for Affinity and Tolerations because of deprecated fields in spec
             kafkaMirrorMakerCluster.setUserAffinity(affinity(spec));
             kafkaMirrorMakerCluster.setTolerations(tolerations(spec));
+
             kafkaMirrorMakerCluster.tracing = spec.getTracing();
         }
 
@@ -196,17 +201,8 @@ public class KafkaMirrorMakerCluster extends AbstractModel {
     }
 
     @SuppressWarnings("deprecation")
-    static List<Toleration> tolerations(KafkaMirrorMakerSpec spec) {
-        if (spec.getTemplate() != null
-                && spec.getTemplate().getPod() != null
-                && spec.getTemplate().getPod().getTolerations() != null) {
-            if (spec.getTolerations() != null) {
-                log.warn("Tolerations given on both spec.tolerations and spec.template.deployment.tolerations; latter takes precedence");
-            }
-            return spec.getTemplate().getPod().getTolerations();
-        } else {
-            return spec.getTolerations();
-        }
+    static List<Toleration> tolerations(KafkaMirrorMakerSpec kafkaMirrorMakerSpec) {
+        return ModelUtils.tolerations("spec.tolerations", kafkaMirrorMakerSpec.getTolerations(), "spec.template.pod.tolerations", kafkaMirrorMakerSpec.getTemplate() == null ? null : kafkaMirrorMakerSpec.getTemplate().getPod());
     }
 
     @SuppressWarnings("deprecation")
@@ -215,21 +211,11 @@ public class KafkaMirrorMakerCluster extends AbstractModel {
                 && spec.getTemplate().getPod() != null
                 && spec.getTemplate().getPod().getAffinity() != null) {
             if (spec.getAffinity() != null) {
-                log.warn("Affinity given on both spec.affinity and spec.template.deployment.affinity; latter takes precedence");
+                log.warn("Affinity given on both spec.affinity and spec.template.pod.affinity; latter takes precedence");
             }
             return spec.getTemplate().getPod().getAffinity();
         } else {
             return spec.getAffinity();
-        }
-    }
-
-    public Service generateService() {
-        List<ServicePort> ports = new ArrayList<>(1);
-        if (isMetricsEnabled()) {
-            ports.add(createServicePort(METRICS_PORT_NAME, METRICS_PORT, METRICS_PORT, "TCP"));
-            return createService("ClusterIP", ports, getPrometheusAnnotations());
-        } else {
-            return null;
         }
     }
 
@@ -244,7 +230,7 @@ public class KafkaMirrorMakerCluster extends AbstractModel {
 
     protected List<Volume> getVolumes(boolean isOpenShift) {
         List<Volume> volumeList = new ArrayList<>(1);
-        volumeList.add(createConfigMapVolume(logAndMetricsConfigVolumeName, ancillaryConfigName));
+        volumeList.add(VolumeUtils.createConfigMapVolume(logAndMetricsConfigVolumeName, ancillaryConfigMapName));
 
         createClientSecretVolume(producer, volumeList, "producer-oauth-certs", isOpenShift);
         createClientSecretVolume(consumer, volumeList, "consumer-oauth-certs", isOpenShift);
@@ -257,7 +243,7 @@ public class KafkaMirrorMakerCluster extends AbstractModel {
             for (CertSecretSource certSecretSource: client.getTls().getTrustedCertificates()) {
                 // skipping if a volume with same Secret name was already added
                 if (!volumeList.stream().anyMatch(v -> v.getName().equals(certSecretSource.getSecretName()))) {
-                    volumeList.add(createSecretVolume(certSecretSource.getSecretName(), certSecretSource.getSecretName(), isOpenShift));
+                    volumeList.add(VolumeUtils.createSecretVolume(certSecretSource.getSecretName(), certSecretSource.getSecretName(), isOpenShift));
                 }
             }
         }
@@ -267,14 +253,14 @@ public class KafkaMirrorMakerCluster extends AbstractModel {
 
     protected List<VolumeMount> getVolumeMounts() {
         List<VolumeMount> volumeMountList = new ArrayList<>(1);
-        volumeMountList.add(createVolumeMount(logAndMetricsConfigVolumeName, logAndMetricsConfigMountPath));
+        volumeMountList.add(VolumeUtils.createVolumeMount(logAndMetricsConfigVolumeName, logAndMetricsConfigMountPath));
 
         /** producer auth*/
         if (producer.getTls() != null && producer.getTls().getTrustedCertificates() != null && producer.getTls().getTrustedCertificates().size() > 0) {
             for (CertSecretSource certSecretSource: producer.getTls().getTrustedCertificates()) {
                 // skipping if a volume mount with same Secret name was already added
                 if (!volumeMountList.stream().anyMatch(vm -> vm.getName().equals(certSecretSource.getSecretName()))) {
-                    volumeMountList.add(createVolumeMount(certSecretSource.getSecretName(),
+                    volumeMountList.add(VolumeUtils.createVolumeMount(certSecretSource.getSecretName(),
                             TLS_CERTS_VOLUME_MOUNT_PRODUCER + certSecretSource.getSecretName()));
                 }
             }
@@ -287,7 +273,7 @@ public class KafkaMirrorMakerCluster extends AbstractModel {
             for (CertSecretSource certSecretSource: consumer.getTls().getTrustedCertificates()) {
                 // skipping if a volume mount with same Secret name was already added
                 if (!volumeMountList.stream().anyMatch(vm -> vm.getName().equals(certSecretSource.getSecretName()))) {
-                    volumeMountList.add(createVolumeMount(certSecretSource.getSecretName(),
+                    volumeMountList.add(VolumeUtils.createVolumeMount(certSecretSource.getSecretName(),
                             TLS_CERTS_VOLUME_MOUNT_CONSUMER + certSecretSource.getSecretName()));
                 }
             }
@@ -321,7 +307,7 @@ public class KafkaMirrorMakerCluster extends AbstractModel {
     @Override
     protected List<Container> getContainers(ImagePullPolicy imagePullPolicy) {
 
-        List<Container> containers = new ArrayList<>();
+        List<Container> containers = new ArrayList<>(1);
 
         Container container = new ContainerBuilder()
                 .withName(name)
@@ -341,6 +327,7 @@ public class KafkaMirrorMakerCluster extends AbstractModel {
                 .withVolumeMounts(getVolumeMounts())
                 .withResources(getResources())
                 .withImagePullPolicy(determineImagePullPolicy(imagePullPolicy, getImage()))
+                .withSecurityContext(templateContainerSecurityContext)
                 .build();
 
         containers.add(container);
@@ -390,6 +377,9 @@ public class KafkaMirrorMakerCluster extends AbstractModel {
             varList.add(buildEnvVar(ENV_VAR_KAFKA_MIRRORMAKER_ABORT_ON_SEND_FAILURE, Boolean.toString(producer.getAbortOnSendFailure())));
         }
         varList.add(buildEnvVar(ENV_VAR_STRIMZI_KAFKA_GC_LOG_ENABLED, String.valueOf(gcLoggingEnabled)));
+        if (javaSystemProperties != null) {
+            varList.add(buildEnvVar(ENV_VAR_STRIMZI_JAVA_SYSTEM_PROPERTIES, ModelUtils.getJavaSystemPropertiesToString(javaSystemProperties)));
+        }
 
         if (tracing != null) {
             varList.add(buildEnvVar(ENV_VAR_STRIMZI_TRACING, tracing.getType()));
@@ -408,6 +398,9 @@ public class KafkaMirrorMakerCluster extends AbstractModel {
                 String.valueOf(livenessProbeOptions.getPeriodSeconds() != null ? livenessProbeOptions.getPeriodSeconds() : DEFAULT_HEALTHCHECK_PERIOD)));
         varList.add(buildEnvVar(ENV_VAR_STRIMZI_READINESS_PERIOD,
                 String.valueOf(readinessProbeOptions.getPeriodSeconds() != null ? readinessProbeOptions.getPeriodSeconds() : DEFAULT_HEALTHCHECK_PERIOD)));
+
+        // Add shared environment variables used for all containers
+        varList.addAll(getSharedEnvVars());
 
         addContainerEnvsToExistingEnvs(varList, templateContainerEnvVars);
 

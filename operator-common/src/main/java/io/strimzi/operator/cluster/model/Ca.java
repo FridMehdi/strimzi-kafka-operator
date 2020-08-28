@@ -88,12 +88,12 @@ public abstract class Ca {
     public static final String CA_STORE_PASSWORD = "ca.password";
     public static final String IO_STRIMZI = "io.strimzi";
 
-    public static final String ANNO_STRIMZI_IO_FORCE_REPLACE = Annotations.STRIMZI_DOMAIN + "/force-replace";
-    public static final String ANNO_STRIMZI_IO_FORCE_RENEW = Annotations.STRIMZI_DOMAIN + "/force-renew";
-    public static final String ANNO_STRIMZI_IO_CA_KEY_GENERATION = Annotations.STRIMZI_DOMAIN + "/ca-key-generation";
-    public static final String ANNO_STRIMZI_IO_CA_CERT_GENERATION = Annotations.STRIMZI_DOMAIN + "/ca-cert-generation";
-    public static final String ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION = Annotations.STRIMZI_DOMAIN + "/cluster-ca-cert-generation";
-    public static final String ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION = Annotations.STRIMZI_DOMAIN + "/clients-ca-cert-generation";
+    public static final String ANNO_STRIMZI_IO_FORCE_REPLACE = Annotations.STRIMZI_DOMAIN + "force-replace";
+    public static final String ANNO_STRIMZI_IO_FORCE_RENEW = Annotations.STRIMZI_DOMAIN + "force-renew";
+    public static final String ANNO_STRIMZI_IO_CA_KEY_GENERATION = Annotations.STRIMZI_DOMAIN + "ca-key-generation";
+    public static final String ANNO_STRIMZI_IO_CA_CERT_GENERATION = Annotations.STRIMZI_DOMAIN + "ca-cert-generation";
+    public static final String ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION = Annotations.STRIMZI_DOMAIN + "cluster-ca-cert-generation";
+    public static final String ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION = Annotations.STRIMZI_DOMAIN + "clients-ca-cert-generation";
     public static final int INIT_GENERATION = 0;
 
     private final PasswordGenerator passwordGenerator;
@@ -352,11 +352,12 @@ public abstract class Ca {
         File brokerCertFile = File.createTempFile("tls", "broker-cert");
         File brokerKeyStoreFile = File.createTempFile("tls", "broker-p12");
 
-        Map<String, CertAndKey> certs = new HashMap<>();
+        int replicasInNewSecret = Math.min(replicasInSecret, replicas);
+        Map<String, CertAndKey> certs = new HashMap<>(replicasInNewSecret);
         // copying the minimum number of certificates already existing in the secret
         // scale up -> it will copy all certificates
         // scale down -> it will copy just the requested number of replicas
-        for (int i = 0; i < Math.min(replicasInSecret, replicas); i++) {
+        for (int i = 0; i < replicasInNewSecret; i++) {
             String podName = podNameFn.apply(i);
             log.debug("Certificate for {} already exists", podName);
             Subject subject = subjectFn.apply(i);
@@ -387,8 +388,12 @@ public abstract class Ca {
                 reasons.add("certificate is expiring");
             }
 
+            if (renewalType.equals(RenewalType.CREATE)) {
+                reasons.add("certificate added");
+            }
+
             if (!reasons.isEmpty())  {
-                log.debug("Certificate for pod {} need to be regenerated because:", podName, String.join(", ", reasons));
+                log.debug("Certificate for pod {} need to be regenerated because: {}", podName, String.join(", ", reasons));
 
                 CertAndKey newCertAndKey = generateSignedCert(subject, brokerCsrFile, brokerKeyFile, brokerCertFile, brokerKeyStoreFile);
                 certs.put(podName, newCertAndKey);
@@ -508,12 +513,12 @@ public abstract class Ca {
             log.debug("{} renewalType {}", this, renewalType);
             switch (renewalType) {
                 case CREATE:
-                    keyData = new HashMap<>();
-                    certData = new HashMap<>();
+                    keyData = new HashMap<>(1);
+                    certData = new HashMap<>(3);
                     generateCaKeyAndCert(nextCaSubject(caKeyGeneration), keyData, certData);
                     break;
                 case REPLACE_KEY:
-                    keyData = new HashMap<>();
+                    keyData = new HashMap<>(1);
                     certData = new HashMap<>(caCertSecret.getData());
                     if (certData.containsKey(CA_CRT)) {
                         String notAfterDate = DATE_TIME_FORMATTER.format(currentCert.getNotAfter().toInstant().atZone(ZoneId.of("Z")));
@@ -525,7 +530,7 @@ public abstract class Ca {
                     break;
                 case RENEW_CERT:
                     keyData = caKeySecret.getData();
-                    certData = new HashMap<>();
+                    certData = new HashMap<>(3);
                     ++caCertGeneration;
                     renewCaCert(nextCaSubject(caKeyGeneration), certData);
                     break;
@@ -552,7 +557,7 @@ public abstract class Ca {
         Map<String, String> certAnnotations = new HashMap<>(2);
         certAnnotations.put(ANNO_STRIMZI_IO_CA_CERT_GENERATION, String.valueOf(caCertGeneration));
 
-        if (renewalType == RenewalType.POSTPONED
+        if (renewalType.equals(RenewalType.POSTPONED)
                 && this.caCertSecret.getMetadata() != null
                 && Annotations.hasAnnotation(caCertSecret, ANNO_STRIMZI_IO_FORCE_RENEW))   {
             certAnnotations.put(ANNO_STRIMZI_IO_FORCE_RENEW, Annotations.stringAnnotation(caCertSecret, ANNO_STRIMZI_IO_FORCE_RENEW, "false"));
@@ -561,7 +566,7 @@ public abstract class Ca {
         Map<String, String> keyAnnotations = new HashMap<>(2);
         keyAnnotations.put(ANNO_STRIMZI_IO_CA_KEY_GENERATION, String.valueOf(caKeyGeneration));
 
-        if (renewalType == RenewalType.POSTPONED
+        if (renewalType.equals(RenewalType.POSTPONED)
                 && this.caKeySecret.getMetadata() != null
                 && Annotations.hasAnnotation(caKeySecret, ANNO_STRIMZI_IO_FORCE_REPLACE))   {
             keyAnnotations.put(ANNO_STRIMZI_IO_FORCE_REPLACE, Annotations.stringAnnotation(caKeySecret, ANNO_STRIMZI_IO_FORCE_REPLACE, "false"));
@@ -650,13 +655,13 @@ public abstract class Ca {
                 break;
         }
         if (!generateCa) {
-            if (renewalType == RenewalType.RENEW_CERT) {
+            if (renewalType.equals(RenewalType.RENEW_CERT)) {
                 log.warn("The certificate (data.{}) in Secret {} in namespace {} needs to be renewed " +
                                 "and it is not configured to automatically renew. This needs to be manually updated before that date. " +
                                 "Alternatively, configure Kafka.spec.tlsCertificates.generateCertificateAuthority=true in the Kafka resource with name {} in namespace {}.",
                         CA_CRT.replace(".", "\\."), this.caCertSecretName, namespace,
                         currentCert.getNotAfter());
-            } else if (renewalType == RenewalType.REPLACE_KEY) {
+            } else if (renewalType.equals(RenewalType.REPLACE_KEY)) {
                 log.warn("The private key (data.{}) in Secret {} in namespace {} needs to be renewed " +
                                 "and it is not configured to automatically renew. This needs to be manually updated before that date. " +
                                 "Alternatively, configure Kafka.spec.tlsCertificates.generateCertificateAuthority=true in the Kafka resource with name {} in namespace {}.",
@@ -725,7 +730,7 @@ public abstract class Ca {
      * @return Whether the certificate was renewed.
      */
     public boolean certRenewed() {
-        return renewalType == RenewalType.RENEW_CERT || renewalType == RenewalType.REPLACE_KEY;
+        return renewalType.equals(RenewalType.RENEW_CERT) || renewalType.equals(RenewalType.REPLACE_KEY);
     }
 
     /**
@@ -734,7 +739,11 @@ public abstract class Ca {
      * @return Whether the key was replaced.
      */
     public boolean keyReplaced() {
-        return renewalType == RenewalType.REPLACE_KEY;
+        return renewalType.equals(RenewalType.REPLACE_KEY);
+    }
+
+    public boolean keyCreated() {
+        return renewalType.equals(RenewalType.CREATE);
     }
 
     private int removeExpiredCerts(Map<String, String> newData) {

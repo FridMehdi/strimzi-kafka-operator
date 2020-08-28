@@ -145,7 +145,7 @@ class TopicSerialization {
                     .build();
         }
 
-        KafkaTopic kt = new KafkaTopicBuilder().withApiVersion("kafka.strimzi.io/v1beta1")
+        KafkaTopic kt = new KafkaTopicBuilder().withApiVersion(KafkaTopic.RESOURCE_GROUP + "/" + KafkaTopic.V1BETA1)
                 .withMetadata(om)
                 // TODO .withUid()
                 .withNewSpec()
@@ -224,7 +224,8 @@ class TopicSerialization {
                 .withNumReplicas((short) meta.getDescription().partitions().get(0).replicas().size())
                 .withMetadata(null);
         for (ConfigEntry entry: meta.getConfig().entries()) {
-            if (!entry.isDefault()) {
+            if (entry.source() != ConfigEntry.ConfigSource.DEFAULT_CONFIG
+                && entry.source() != ConfigEntry.ConfigSource.STATIC_BROKER_CONFIG) {
                 builder.withConfigEntry(entry.name(), entry.value());
             }
         }
